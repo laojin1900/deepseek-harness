@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import LlmRuntime, {
+  CallId,
   errorChain,
   GenerateOptions,
   HarnessError,
+  IMAGE_OMITTED_PLACEHOLDER,
   isContextWindowExceededError,
   isQuotaExceededError,
   LlmAdapter,
@@ -21,6 +23,7 @@ import type {
   LlmProviderInfo,
   LlmResolvedModelInfo,
 } from '@deepseek-ai/dsh-llm'
+import { AttachmentId } from '@deepseek-ai/dsh-attachment'
 
 class ScriptedAdapter extends LlmAdapter {
   constructor(private script: StreamChunk[]) {
@@ -181,6 +184,80 @@ describe('LlmRuntime', () => {
     const chunks: StreamChunk[] = []
     for await (const chunk of ctx.llm.stream({ provider: 'test-provider', model: 'test-model', messages: [] })) chunks.push(chunk)
     expect(chunks).toEqual(SCRIPT)
+  })
+
+  it('degrades logged image blocks only for models that declare no image input', async () => {
+    const ctx = new Context()
+    await ctx.plugin(LlmRuntime)
+    const adapter = new class extends RecordingAdapter {
+      override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+        return Promise.resolve({
+          provider,
+          id: model,
+          name: model,
+          inputModalities: model === 'plain'
+            ? ['text' as const]
+            : ['text' as const, 'image' as const],
+        })
+      }
+    }(SCRIPT)
+    ctx.llm.registerAdapter(['route'], adapter)
+    const image = {
+      type: 'image' as const,
+      attachment: { attachmentId: AttachmentId('att-1'), mediaType: 'image/png' as const, bytes: 1, width: 1, height: 1 },
+    }
+    const toolMessage = createMessage({
+      role: 'user',
+      content: [{
+        type: 'tool-result' as const,
+        toolCallId: CallId('call-1'),
+        content: [image, { type: 'text' as const, text: 'tool text' }],
+      }],
+      source: { kind: 'tool', callId: CallId('call-1') },
+    })
+    const textMessage = createMessage({
+      role: 'user',
+      content: [{ type: 'text' as const, text: 'what is this?' }],
+      source: { kind: 'user' },
+    })
+    const imageMessage = createMessage({
+      role: 'user',
+      content: [image, { type: 'text' as const, text: 'compare' }],
+      source: { kind: 'user' },
+    })
+    const messages = [toolMessage, textMessage, imageMessage]
+
+    // A model that declares no image input receives placeholder text for every
+    // image block (nested tool results included); the caller's log is untouched.
+    for await (const _chunk of ctx.llm.stream({ provider: 'route', model: 'plain', messages })) { /* drain */ }
+    expect(adapter.lastOptions?.messages[0]?.content).toEqual([{
+      type: 'tool-result',
+      toolCallId: CallId('call-1'),
+      content: [{ type: 'text', text: IMAGE_OMITTED_PLACEHOLDER }, { type: 'text', text: 'tool text' }],
+    }])
+    expect(adapter.lastOptions?.messages[1]).toBe(textMessage)
+    expect(adapter.lastOptions?.messages[2]?.content).toEqual([
+      { type: 'text', text: IMAGE_OMITTED_PLACEHOLDER },
+      { type: 'text', text: 'compare' },
+    ])
+    expect(imageMessage.content[0]).toEqual(image)
+    expect(toolMessage.content).toEqual([{
+      type: 'tool-result',
+      toolCallId: CallId('call-1'),
+      content: [image, { type: 'text', text: 'tool text' }],
+    }])
+
+    // An image-capable model receives the original messages untouched.
+    for await (const _chunk of ctx.llm.stream({ provider: 'route', model: 'vision', messages })) { /* drain */ }
+    expect(adapter.lastOptions?.messages).toEqual(messages)
+
+    // The prepared-call path carries the same capability metadata.
+    const prepared = await ctx.llm.prepareCall({ provider: 'route', model: 'plain' })
+    for await (const _chunk of prepared.stream({ provider: 'route', model: 'plain', messages })) { /* drain */ }
+    expect(adapter.lastOptions?.messages[2]?.content).toEqual([
+      { type: 'text', text: IMAGE_OMITTED_PLACEHOLDER },
+      { type: 'text', text: 'compare' },
+    ])
   })
 
   it('trusts the immutable message creation boundary for direct calls', async () => {

@@ -217,12 +217,12 @@ export interface PiAiModelProfile {
    * Request modalities this model accepts. Absent — or empty, which describes
    * a model that accepts nothing and so states no answer either — keeps the
    * installed catalog entry's modalities, then the route's `defaultInput`.
-   * Declaring images is what makes a hand-declared vision model usable, and
-   * declaring text alone corrects a catalog model whose gateway does not serve
-   * what the catalog records. This is a claim about the endpoint, not a check
-   * of it: nothing interrogates a gateway for what it accepts, so a model
-   * claiming images its endpoint refuses is refused by the provider instead,
-   * mid-turn.
+   * Declaring text alone corrects a catalog or gateway model whose endpoint
+   * does not serve images; declaring images restates the hand-declared default
+   * when a narrower route fallback would otherwise apply. This is a claim
+   * about the endpoint, not a check of it: nothing interrogates a gateway for
+   * what it accepts, so a model claiming images its endpoint refuses is
+   * refused by the provider instead, mid-turn.
    */
   input?: PiAiModality[]
   /**

@@ -310,10 +310,24 @@ export class PiAiAdapter extends LlmAdapter {
       const context = attachments === undefined
         ? toPiContext(options)
         : await toPiContext(options, attachments)
+      // pi-ai clamps maxTokens against the model's context window; a
+      // long-running session near the window would be squeezed to 1, which
+      // OpenAI-compatible endpoints reject ("max_completion_tokens must be
+      // greater than 2"). Floor it so the request stays sendable and the
+      // provider's own error is the honest one.
+      const flooredMaxTokens = options.maxTokens === undefined
+        ? undefined
+        : Math.max(options.maxTokens, 1024)
+      // TEMP DEBUG: confirm the floored cap and the model's context window.
+      console.log('[pi-ai-fix]', JSON.stringify({
+        provider: options.provider, model: options.model,
+        inputMaxTokens: options.maxTokens, flooredMaxTokens,
+        contextWindow: model.contextWindow,
+      }))
       const events = snapshot.models.streamSimple(model, context, {
         ...profileOptions(profile, reasoning, apiKey),
         ...options.temperature === undefined ? {} : { temperature: options.temperature },
-        ...options.maxTokens === undefined ? {} : { maxTokens: options.maxTokens },
+        ...flooredMaxTokens === undefined ? {} : { maxTokens: flooredMaxTokens },
         ...options.sessionId === undefined ? {} : { sessionId: String(options.sessionId) },
         signal: watchdog.signal,
         // Profile headers are deployment-owned; attribution names are

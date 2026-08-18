@@ -229,6 +229,29 @@ export interface LlmDiscoveredModel {
   maxTokens?: number
 }
 
+/**
+ * One quota/balance answer for a provider route, already shaped for display.
+ * The reliability grade is explicit (recipe §7): `ok` means a real endpoint
+ * answered, `unavailable` means no read-only endpoint exists, `error` means
+ * the query failed. Never fabricate a number for an unavailable provider.
+ */
+export interface LlmQuotaResult {
+  /** Reliability status of this answer. */
+  status: 'ok' | 'unavailable' | 'error'
+  /** Short display text (e.g. "93%", "13.2M", "余量不可查"). */
+  text: string
+  /** Tooltip detail: source, plan, and per-metric remaining/used. */
+  detail?: string
+}
+
+/** Query payload for one provider's quota. */
+export interface LlmQuotaRequest {
+  /** Provider route to ask. */
+  provider: string
+  /** Caller cancellation; implementations must settle promptly after it aborts. */
+  signal?: AbortSignal
+}
+
 /** One adapter-discovered model; catalog membership is advisory, not request validation. */
 export interface LlmModelInfo {
   /** Provider route that owns this model entry. */

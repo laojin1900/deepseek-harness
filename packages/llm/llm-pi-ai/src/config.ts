@@ -42,15 +42,15 @@ export const DEFAULT_MAX_TOKENS = 32_768
 
 /**
  * Modalities assumed for a model neither configuration nor the catalog
- * declares. Text is the floor every supported protocol certainly carries, so
- * this is the absence of a declaration rather than a guess at the endpoint:
- * nothing can interrogate a gateway for its modalities, and the two wrong
- * answers do not cost the same. Under-claiming refuses the image before it is
- * attached, naming the model. Over-claiming admits one the provider then
- * rejects mid-turn, after the message is durable, leaving the session
- * repeating a request that cannot succeed.
+ * declares. Custom and gateway endpoints are treated as vision-capable until
+ * a profile or the Models settings page says otherwise: nothing can
+ * interrogate a gateway for its modalities, and the common case is a
+ * hand-declared chat model that already accepts images. Under-claiming
+ * refuses the image before it is attached, naming the model. Over-claiming
+ * admits one the provider then rejects mid-turn; turn the provider or model
+ * image-input switch off if that happens.
  */
-export const DEFAULT_INPUT: readonly PiAiModality[] = ['text']
+export const DEFAULT_INPUT: readonly PiAiModality[] = ['text', 'image']
 
 export type {
   PiAiCompatProfile,
@@ -75,6 +75,13 @@ export interface PiAiProviderProfile {
   api?: string
   /** Endpoint for this route's models; defaults to the installed catalog's endpoint. */
   baseURL?: string
+  /**
+   * Only accept discovered models whose id starts with this prefix. A
+   * subscription gateway serves many vendors under one endpoint; the prefix
+   * isolates the channel this route owns (e.g. `antigravity/`, `kimi-coding/`).
+   * Omission accepts every id the listing returns.
+   */
+  modelPrefix?: string
   /**
    * This route's model catalog. Omission serves the installed catalog for the
    * route unchanged; an explicit list replaces it, each entry defaulting its
@@ -112,12 +119,11 @@ export interface PiAiProviderProfile {
   /**
    * Request modalities for a model this route lists that neither its entry's
    * {@link PiAiModelProfile.input} nor the installed catalog declares (default
-   * `[text]`). A fallback like the capacities above, not an override: a
+   * `[text, image]`). A fallback like the capacities above, not an override: a
    * catalog model keeps the modalities the catalog records for it, and this
-   * value never narrows one. A gateway serving vision models the catalog does
-   * not describe declares `[text, image]` once here instead of on every entry.
-   * Unlike an entry's list, this one may not be empty — nothing sits below it
-   * to answer instead.
+   * value never narrows one. A gateway whose undescribed models are text-only
+   * declares `[text]` once here instead of on every entry. Unlike an entry's
+   * list, this one may not be empty — nothing sits below it to answer instead.
    */
   defaultInput?: PiAiModality[]
   /** Provider request headers; Harness attribution wins reserved names. */
@@ -234,6 +240,7 @@ const profile = z.object({
   displayName: z.string(),
   api: z.union(supportedProtocols()),
   baseURL: z.string(),
+  modelPrefix: z.string(),
   models: z.array(modelProfile),
   modelOverrides: z.dict(modelOverride),
   compat: compatProfile,

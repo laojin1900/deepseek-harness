@@ -4,7 +4,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import LlmRuntime, { userAgent } from '@deepseek-ai/dsh-llm'
 import * as LlmPiAi from '@deepseek-ai/dsh-llm-pi-ai'
-import { getBuiltinModels } from '@earendil-works/pi-ai/providers/all'
 import { discoverModels } from '../src/discovery.ts'
 
 const servers: Server[] = []
@@ -73,18 +72,27 @@ async function harness(): Promise<Context> {
 }
 
 describe('catalog-route model discovery', () => {
-  it('answers from the installed registry, with capacities and no network call', async () => {
-    const server = await listingServer({ body: JSON.stringify({ data: [{ id: 'from-the-endpoint' }] }) })
+  it('interrogates a catalog route that names a baseURL, merging known capacities', async () => {
+    // A route naming its own endpoint is interrogated live: the configured
+    // endpoint is the truth, and installed entries go stale between releases.
+    const server = await listingServer({
+      body: JSON.stringify({ data: [{ id: 'deepseek-v4-flash' }, { id: 'from-the-endpoint' }] }),
+    })
     const ctx = await harness()
 
     const models = await ctx.llm.discoverModels('llm-pi-ai', { provider: 'deepseek', baseURL: server.url })
 
-    // pi-ai's own registry is the authority for its own providers, and it
-    // carries what a listing endpoint would not disclose.
     expect(models.map(model => model.id).sort())
-      .toEqual(getBuiltinModels('deepseek').map(model => model.id).sort())
-    expect(models.every(model => (model.contextWindow ?? 0) > 0 && (model.maxTokens ?? 0) > 0)).toBe(true)
-    expect(server.paths).toEqual([])
+      .toEqual(['deepseek-v4-flash', 'from-the-endpoint'])
+    expect(server.paths).toEqual(['/models'])
+    // A known id keeps its installed capacities even though the listing
+    // discloses none.
+    const flash = models.find(model => model.id === 'deepseek-v4-flash')
+    expect(flash?.contextWindow).toBeGreaterThan(0)
+    expect(flash?.maxTokens).toBeGreaterThan(0)
+    // An unknown id keeps the listing's own (absent) fields.
+    const unknown = models.find(model => model.id === 'from-the-endpoint')
+    expect(unknown?.contextWindow).toBeUndefined()
   })
 
   it('needs no endpoint for a route the catalog describes', async () => {
@@ -266,11 +274,87 @@ describe('draft-provider model discovery', () => {
       // Azure authenticates with an `api-key` header and an `api-version`
       // query despite its OpenAI lineage, and Codex uses OAuth; guessing at
       // either would report an auth failure as a provider with no models.
+      // A custom Google-protocol gateway is refused for the same reason —
+      // only the official Generative Language host is listed live.
       const ctx = await harness()
       await expect(ctx.llm.discoverModels('llm-pi-ai', { baseURL: 'https://gateway.example/v1', api }))
         .rejects.toMatchObject({ code: 'DISCOVERY_UNSUPPORTED' })
     },
   )
+
+  it('lists official Google from the live Generative Language catalog', async () => {
+    const urls: string[] = []
+    vi.stubGlobal('fetch', async (input: string | URL) => {
+      const url = String(input)
+      urls.push(url)
+      const token = new URL(url).searchParams.get('pageToken')
+      const page = token === 'page-2'
+        ? {
+          models: [{
+            name: 'models/gemini-3.7-flash',
+            displayName: 'Gemini 3.7 Flash',
+            inputTokenLimit: 1048576,
+            outputTokenLimit: 65536,
+            supportedGenerationMethods: ['generateContent'],
+          }],
+        }
+        : {
+          models: [
+            {
+              name: 'models/gemini-3.6-flash',
+              displayName: 'Gemini 3.6 Flash',
+              inputTokenLimit: 1048576,
+              outputTokenLimit: 65536,
+              supportedGenerationMethods: ['generateContent'],
+            },
+            {
+              name: 'models/gemini-3.1-flash-image',
+              displayName: 'Nano Banana',
+              supportedGenerationMethods: ['generateContent'],
+            },
+            {
+              name: 'models/gemini-embedding-001',
+              displayName: 'Embedding',
+              supportedGenerationMethods: ['embedContent'],
+            },
+          ],
+          nextPageToken: 'page-2',
+        }
+      return new Response(JSON.stringify(page), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    })
+    const ctx = await harness()
+
+    const models = await ctx.llm.discoverModels('llm-pi-ai', {
+      provider: 'google',
+      apiKey: 'test-google-key',
+    })
+
+    expect(urls).toHaveLength(2)
+    expect(urls[0]).toContain('generativelanguage.googleapis.com/v1beta/models')
+    expect(urls[0]).toContain('key=test-google-key')
+    expect(urls[1]).toContain('pageToken=page-2')
+    expect(models.map(model => model.id)).toEqual(['gemini-3.6-flash', 'gemini-3.7-flash'])
+    const flash = models.find(model => model.id === 'gemini-3.7-flash')
+    expect(flash).toEqual({
+      id: 'gemini-3.7-flash',
+      name: 'Gemini 3.7 Flash',
+      contextWindow: 1048576,
+      maxTokens: 65536,
+    })
+  })
+
+  it('still refuses a Google-protocol draft pointed at a different host', async () => {
+    const ctx = await harness()
+    await expect(ctx.llm.discoverModels('llm-pi-ai', {
+      provider: 'google',
+      api: 'google-generative-ai',
+      baseURL: 'https://gateway.example/v1beta',
+      apiKey: 'test-google-key',
+    })).rejects.toMatchObject({ code: 'DISCOVERY_UNSUPPORTED' })
+  })
 
   it('reports cancellation during the body read as an abort, not a raw reason', async () => {
     const ctx = await harness()

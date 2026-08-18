@@ -6,7 +6,7 @@
  * either entry is what the other shows next.
  */
 import type {
-  IApiClient, ModelCatalogFailure, ModelProviderGroup, ModelSelection, SessionId, SessionModels,
+  IApiClient, ModelCatalogFailure, ModelProviderGroup, ModelSelection, QuotaView, SessionId, SessionModels,
 } from '@deepseek-ai/dsh-api-remotes/client'
 import type { SnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
@@ -27,6 +27,8 @@ export interface ModelDirectoryState {
   groups: readonly ModelProviderGroup[]
   /** Provider-local failures from the last load; usable groups stay usable. */
   failures: readonly ModelCatalogFailure[]
+  /** Provider-header quota answers, keyed by provider id (recipe §7). */
+  quotas: Readonly<Record<string, QuotaView>>
   /** Lifecycle of the in-flight operation. */
   status: 'idle' | 'loading' | 'ready' | 'selecting' | 'error'
   /** Whole-request or selection failure text; null when none. */
@@ -37,7 +39,7 @@ export interface ModelDirectoryState {
 export class ModelDirectory {
   /** The shared snapshot both entries render from (uSES-safe store). */
   readonly store: SnapshotStore<ModelDirectoryState> = createSnapshotStore<ModelDirectoryState>({
-    current: null, routable: null, groups: [], failures: [], status: 'idle', error: null,
+    current: null, routable: null, groups: [], failures: [], quotas: {}, status: 'idle', error: null,
   })
 
   /** Latest operation wins; an older response never overwrites a newer one. */
@@ -46,11 +48,13 @@ export class ModelDirectory {
 
   /**
    * @param sessions - the session wire face (captured from the plugin's root connection).
+   * @param llm - the llm wire face, for provider quota queries.
    * @param sessionId - the owning session.
    * @param available - whether this session may use Agent-bound model RPCs.
    */
   constructor(
     private readonly sessions: Pick<IApiClient['sessions'], 'models' | 'selectModel'>,
+    private readonly llm: Pick<IApiClient['llm'], 'quota'>,
     private readonly sessionId: SessionId,
     private readonly available: () => boolean,
   ) {}
@@ -134,11 +138,33 @@ export class ModelDirectory {
       s.routable = null
       s.groups = []
       s.failures = []
+      s.quotas = {}
       s.status = 'idle'
       s.error = null
     })
     if (!this.available()) return
     void this.load().catch(() => { /* the next menu open remains the explicit retry surface */ })
+  }
+
+  /**
+   * Refresh one provider's quota answer (fire-and-forget into the store). A
+   * failure or `unavailable` still lands as a visible answer — never a blank.
+   * @param provider - the provider route to ask.
+   */
+  loadQuota(provider: string): void {
+    if (this.disposed) return
+    void this.llm.quota({ provider }).then(({ result }) => {
+      if (this.disposed) return
+      const quota = result.ok ? result.value.quota : { status: 'error' as const, text: '查询失败' }
+      this.store.update((s) => {
+        s.quotas = { ...s.quotas, [provider]: quota }
+      })
+    }).catch(() => {
+      if (this.disposed) return
+      this.store.update((s) => {
+        s.quotas = { ...s.quotas, [provider]: { status: 'error', text: '查询失败' } }
+      })
+    })
   }
 
   /** Scope teardown: late settlements lose write access to the store. */

@@ -231,11 +231,6 @@ function imageInEvent(event: SessionEvent, match: (ref: ImageAttachmentRef) => b
   return undefined
 }
 
-/** True when the current model-visible surface contains an image. */
-function messagesHaveImage(messages: readonly { content: readonly ContentBlock[] }[]): boolean {
-  return messages.some(message => contentHasImage(message.content))
-}
-
 /** Resolve the first reference matching one opaque id. */
 function referencedImage(events: readonly SessionEvent[], attachmentId: string): ImageAttachmentRef | undefined {
   for (const event of events) {
@@ -2292,14 +2287,21 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
                 ? {}
                 : { reasoningEffort: ReasoningEffortId(reasoningEffort) },
             })
+            // Multi-turn history is not bound to the selected model's modality:
+            // already-logged images degrade to placeholder text at dispatch when
+            // the model cannot see them, so a session that once carried an image
+            // may still switch to a text-only model. Only images still QUEUED
+            // for delivery are new content, and admitting them against a
+            // text-only model would silently replace the attachment the user
+            // just handed over — refuse the switch for that case alone.
             const pendingImage = [...found.agent.inbox.nextTurn, ...found.agent.inbox.nextStep]
               .some(message => contentHasImage(message.content))
-            if (pendingImage || messagesHaveImage(found.agent.session.deriveMessages())) {
+            if (pendingImage) {
               const info = await ctx.llm.resolveModelInfo(resolved.provider, resolved.model)
               if (info.inputModalities !== undefined && !info.inputModalities.includes('image')) {
                 return err(request, {
                   code: 'model-unavailable',
-                  message: `Model "${resolved.model}" does not accept image input, but this session already contains images; select an image-capable model.`,
+                  message: `Model "${resolved.model}" does not accept image input, and this session has queued image messages; select an image-capable model or wait for the queue to clear.`,
                   details: { provider, model },
                 })
               }
@@ -3421,6 +3423,31 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             code: 'model-discovery-failed',
             message: error instanceof Error ? error.message : String(error),
             details: { settingsNs, ...baseURL === undefined ? {} : { baseURL } },
+          })
+        }
+      },
+
+      async quota(request, signal) {
+        const { provider } = request.payload
+        const entry = ctx.llm.listConfigurableProviders().find(p => p.provider === provider)
+        if (entry === undefined) {
+          return err(request, {
+            code: 'quota-query-failed',
+            message: `no configurable provider "${provider}" to query`,
+            details: { settingsNs: '', provider },
+          })
+        }
+        try {
+          const quota = await ctx.llm.getQuota(entry.settingsNs, {
+            provider,
+            ...signal === undefined ? {} : { signal },
+          })
+          return ok(request, { quota })
+        } catch (error: unknown) {
+          return err(request, {
+            code: 'quota-query-failed',
+            message: error instanceof Error ? error.message : String(error),
+            details: { settingsNs: entry.settingsNs, provider },
           })
         }
       },

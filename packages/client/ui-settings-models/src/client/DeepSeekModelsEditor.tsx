@@ -7,6 +7,7 @@
 
 import { useState } from 'react'
 import type { ReactNode } from 'react'
+import type { IApiClient } from '@deepseek-ai/dsh-api-remotes/client'
 import {
   IconChevronDownOutline14, IconChevronRightOutline14, IconPlusOutline16, IconTrashOutline16,
 } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -15,6 +16,13 @@ import styles from './ModelsSection.module.css'
 
 /** One catalog entry kept structurally open so hidden or future fields survive an edit. */
 export type DeepSeekModelDraft = Record<string, unknown>
+
+/** Discovery probe target: the namespace and endpoint facts the fetch carries. */
+export interface DeepSeekProbeTarget {
+  settingsNs: string
+  baseURL?: string
+  apiKey?: string
+}
 
 /** The catalog fields this editor writes. */
 type CatalogField = 'id' | 'name' | 'contextWindow' | 'maxTokens'
@@ -140,6 +148,10 @@ export interface DeepSeekModelsEditorProps {
   onChange: (models: DeepSeekModelDraft[]) => void
   /** Remove the user-owned array and return to inheritance. */
   onReset: () => void
+  /** Discovery probe target for the fetch action; absent hides the button. */
+  probe?: DeepSeekProbeTarget
+  /** Wire face for the discover-models RPC; absent hides the fetch button. */
+  api?: Pick<IApiClient, 'llm'>
 }
 
 /**
@@ -162,6 +174,8 @@ export function DeepSeekModelsEditor(props: DeepSeekModelsEditorProps): ReactNod
   // because the rows they annotated are gone.
   const [editing, setEditing] = useState<ReadonlyMap<string, string>>(() => new Map())
   const [expanded, setExpanded] = useState<ReadonlySet<number>>(() => new Set())
+  const [fetching, setFetching] = useState(false)
+  const [fetchError, setFetchError] = useState<string | undefined>(undefined)
 
   const update = (index: number, key: CatalogField, value: unknown): void => {
     const next = props.models.map((model, at) => {
@@ -262,6 +276,52 @@ export function DeepSeekModelsEditor(props: DeepSeekModelsEditorProps): ReactNod
     </label>
   )
 
+  const fetchModels = async (): Promise<void> => {
+    if (props.api === undefined || props.probe === undefined) return
+    setFetching(true)
+    setFetchError(undefined)
+    try {
+      const response = await props.api.llm.discoverModels({
+        settingsNs: props.probe.settingsNs,
+        ...props.probe.baseURL === undefined || props.probe.baseURL.length === 0 ? {} : { baseURL: props.probe.baseURL },
+        ...props.probe.apiKey === undefined ? {} : { apiKey: props.probe.apiKey },
+      })
+      if (!response.result.ok) {
+        setFetchError(response.result.error.message)
+        return
+      }
+      const found = response.result.value.models
+      if (found.length === 0) {
+        setFetchError(props.t('fetchEmpty'))
+        return
+      }
+      const known = new Set(props.models.map((model) => {
+        const id = model['id']
+        return typeof id === 'string' ? id.trim() : ''
+      }))
+      const additions: DeepSeekModelDraft[] = []
+      for (const model of found) {
+        if (known.has(model.id)) continue
+        known.add(model.id)
+        additions.push({
+          id: model.id,
+          ...model.name === undefined ? {} : { name: model.name },
+          ...model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow },
+          ...model.maxTokens === undefined ? {} : { maxTokens: model.maxTokens },
+        })
+      }
+      if (additions.length === 0) {
+        setFetchError(props.t('fetchEmpty'))
+        return
+      }
+      props.onChange([...props.models.map(model => ({ ...model })), ...additions])
+    } catch (error: unknown) {
+      setFetchError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setFetching(false)
+    }
+  }
+
   return (
     <section className={styles['modelCatalog']} aria-label={props.t('models')}>
       <div className={styles['modelListHead']}>
@@ -282,6 +342,21 @@ export function DeepSeekModelsEditor(props: DeepSeekModelsEditorProps): ReactNod
               {props.t('resetModels')}
             </button>
           )
+          : null}
+        {props.api !== undefined && props.probe !== undefined
+          ? (
+            <button
+              type="button"
+              className={styles['linkButton']}
+              disabled={props.disabled || fetching}
+              onClick={() => { void fetchModels() }}
+            >
+              {fetching ? props.t('fetching') : props.t('fetchModels')}
+            </button>
+          )
+          : null}
+        {fetchError !== undefined
+          ? <span className={styles['fetchError']} role="alert">{fetchError}</span>
           : null}
       </div>
       {props.models.length === 0

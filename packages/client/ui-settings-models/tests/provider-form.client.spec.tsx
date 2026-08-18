@@ -476,8 +476,12 @@ describe('endpoint interrogation', () => {
     fireEvent.click(screen.getByText(en.fetchModels))
     await screen.findByText(en.fetchTitle)
     // The already-configured row starts unchecked; the new one starts checked.
+    // The master box sits above the rows and reflects the partial pick.
+    const selectAll = screen.getByRole('checkbox', { name: en.fetchSelectAll }) as HTMLInputElement
     const boxes = [...document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')]
+      .filter(box => box !== selectAll)
     expect(boxes.map(box => box.checked)).toEqual([false, true])
+    expect(selectAll.indeterminate).toBe(true)
     fireEvent.click(screen.getByText(en.fetchAdopt))
 
     fireEvent.click(screen.getByText(en.apply))
@@ -592,7 +596,9 @@ describe('endpoint interrogation', () => {
 
     fireEvent.click(screen.getByText(en.fetchModels))
     await screen.findByText(en.fetchTitle)
+    const selectAll = screen.getByRole('checkbox', { name: en.fetchSelectAll }) as HTMLInputElement
     const boxes = [...document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')]
+      .filter(box => box !== selectAll)
     const first = boxes[0] as HTMLInputElement
     fireEvent.click(first)
     fireEvent.click(first)
@@ -602,6 +608,44 @@ describe('endpoint interrogation', () => {
     await waitFor(() => { expect(mutate).toHaveBeenCalled() })
     // A disclosed output cap rides along with the candidate that has one.
     expect(firstMutate(mutate).ops[0]?.value).toEqual([{ id: 'a' }, { id: 'b', maxTokens: 2048 }])
+  })
+
+  it('selects or clears every candidate with the master checkbox', async () => {
+    const discover = vi.fn(() => Promise.resolve(ok({
+      models: [{ id: 'a' }, { id: 'b' }, { id: 'c' }],
+    })))
+    const { mutate } = await mountSection({ discover })
+    openEditor('openai')
+
+    fireEvent.click(screen.getByText(en.fetchModels))
+    await screen.findByText(en.fetchTitle)
+    const selectAll = screen.getByRole('checkbox', { name: en.fetchSelectAll }) as HTMLInputElement
+    const candidateBoxes = (): HTMLInputElement[] =>
+      [...document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')]
+        .filter(box => box !== selectAll)
+
+    // Nothing configured yet, so every candidate starts picked and the master
+    // box reads as fully checked.
+    expect(candidateBoxes().map(box => box.checked)).toEqual([true, true, true])
+    expect(selectAll.checked).toBe(true)
+    expect(selectAll.indeterminate).toBe(false)
+
+    // One click on the master clears the whole list.
+    fireEvent.click(selectAll)
+    expect(candidateBoxes().map(box => box.checked)).toEqual([false, false, false])
+    expect(selectAll.checked).toBe(false)
+
+    // A partial pick leaves the master indeterminate; another click fills it.
+    fireEvent.click(candidateBoxes()[0] as HTMLInputElement)
+    expect(selectAll.indeterminate).toBe(true)
+    fireEvent.click(selectAll)
+    expect(candidateBoxes().map(box => box.checked)).toEqual([true, true, true])
+    expect(selectAll.checked).toBe(true)
+
+    fireEvent.click(screen.getByText(en.fetchAdopt))
+    fireEvent.click(screen.getByText(en.apply))
+    await waitFor(() => { expect(mutate).toHaveBeenCalled() })
+    expect(firstMutate(mutate).ops[0]?.value).toEqual([{ id: 'a' }, { id: 'b' }, { id: 'c' }])
   })
 })
 
