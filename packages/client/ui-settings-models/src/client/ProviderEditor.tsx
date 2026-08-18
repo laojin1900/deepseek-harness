@@ -458,6 +458,8 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
                     ? defaultContextWindow
                     : undefined}
                   defaultMaxTokens={typeof defaultMaxTokens === 'number' ? defaultMaxTokens : undefined}
+                  probe={probe}
+                  api={api}
                 />
               )
               : <ModelListEditor {...catalogProps} probe={probe} probeBlocked={keyFailure} api={api} />}

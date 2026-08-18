@@ -39,6 +39,7 @@ function state(overrides: Partial<ModelDirectoryState> = {}): ModelDirectoryStat
       models: [{ id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', reasoning }],
     }],
     failures: [],
+    quotas: {},
     status: 'ready',
     error: null,
     ...overrides,
@@ -59,6 +60,7 @@ describe('ModelSelect reasoning effort', () => {
       available
       directory={directory}
       load={vi.fn()}
+      loadQuota={vi.fn()}
       select={select}
       t={t}
     />)
@@ -100,6 +102,7 @@ describe('ModelSelect reasoning effort', () => {
       available
       directory={directory}
       load={vi.fn()}
+      loadQuota={vi.fn()}
       select={vi.fn().mockResolvedValue(true)}
       t={t}
     />)
@@ -122,6 +125,7 @@ describe('ModelSelect reasoning effort', () => {
       available
       directory={directory}
       load={vi.fn()}
+      loadQuota={vi.fn()}
       select={select}
       t={t}
     />)
@@ -154,6 +158,7 @@ describe('ModelSelect reasoning effort', () => {
       available
       directory={directory}
       load={vi.fn()}
+      loadQuota={vi.fn()}
       select={select}
       t={t}
     />)
@@ -174,6 +179,7 @@ describe('ModelSelect reasoning effort', () => {
       available={false}
       directory={createSnapshotStore(state())}
       load={load}
+      loadQuota={vi.fn()}
       select={vi.fn().mockResolvedValue(false)}
       t={t}
     />)

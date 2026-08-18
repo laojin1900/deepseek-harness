@@ -27,6 +27,8 @@ import {
   DeepSeekAdapter,
 } from './adapter.ts'
 import type { DeepSeekCatalogModel, DeepSeekConnectionOptions } from './adapter.ts'
+import { discoverModels } from './discovery.ts'
+import { queryBalance } from './quota.ts'
 
 export {
   DEFAULT_CONTEXT_WINDOW,
@@ -272,5 +274,39 @@ export function apply(ctx: Context, config: Config): void {
       current = source
     },
     onChange: ensureRegistrationFacts,
+  })
+
+  // Model discovery: answer the Models page "fetch available models" action by
+  // interrogating the endpoint's OpenAI-compatible /models listing, merging the
+  // result with the curated catalog so recognized ids keep their metadata.
+  ctx.llm.registerModelDiscovery(NS, (request) => {
+    const connection = options()
+    return discoverModels(request, {
+      resolvedBaseURL: connection.baseURL,
+      defaultContextWindow: connection.defaultContextWindow,
+      defaultMaxTokens: connection.maxTokens,
+      knownModels: connection.models,
+      storedApiKey: async () => {
+        const ref = connection.apiKeyEnv
+        const credentials = ctx.get('credentials')
+        if (credentials !== undefined) {
+          const hit = await credentials.resolve(ref)
+          return hit?.value
+        }
+        return launchEnvironmentOf(ctx).get(ref)?.value
+      },
+    })
+  })
+
+  // Quota: answer the provider header balance badge from /user/balance.
+  ctx.llm.registerQuota(NS, async (request) => {
+    const connection = options()
+    let apiKey: string
+    try {
+      apiKey = await resolveApiKey(connection)
+    } catch {
+      return { status: 'unavailable', text: '余量不可查' }
+    }
+    return queryBalance(connection.baseURL, apiKey, request.signal)
   })
 }

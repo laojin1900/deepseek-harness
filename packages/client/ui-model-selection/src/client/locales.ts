@@ -27,6 +27,15 @@ export const zh = {
   'empty.models': '没有可用的模型。',
   'blocked.composer': '当前模型不可用，请先选择模型',
   'empty.efforts': '当前模型未提供推理等级。',
+  'channel.subscription': '订阅',
+  'channel.api': '按量',
+  'group.expand': '显示更多（还有 {count} 个）',
+  'group.collapse': '收起列表',
+  'group.firstOf': '前 {count}/{total}',
+  'model.hide': '隐藏该模型',
+  'quota.loading': '余额加载中',
+  'search.placeholder': '搜索模型…',
+  'search.refresh': '刷新模型列表',
 } satisfies Record<string, string>
 
 /** The model namespace key union. */
@@ -51,4 +60,13 @@ export const en = {
   'empty.models': 'No models available.',
   'blocked.composer': 'This model is unavailable — select one to continue',
   'empty.efforts': 'This model provides no reasoning effort levels.',
+  'channel.subscription': 'Sub',
+  'channel.api': 'API',
+  'group.expand': 'Show {count} more',
+  'group.collapse': 'Show less',
+  'group.firstOf': 'First {count} of {total}',
+  'model.hide': 'Hide this model',
+  'quota.loading': 'Loading balance',
+  'search.placeholder': 'Search models…',
+  'search.refresh': 'Refresh model list',
 } satisfies Record<ModelKey, string>

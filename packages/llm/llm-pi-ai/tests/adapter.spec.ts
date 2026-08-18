@@ -98,13 +98,15 @@ describe('PiAiAdapter provider routing', () => {
       model: 'deepseek-v4-flash',
       messages: [],
       temperature: 0.2,
+      // A tiny cap is floored to the adapter's 1024-token minimum so a
+      // context-squeezed session can never send max_completion_tokens=1.
       maxTokens: 77,
       sessionId: 'session-for-pi' as never,
     })
     expect(server.requests[0]).toMatchObject({
       model: 'deepseek-v4-flash',
       temperature: 0.2,
-      max_completion_tokens: 77,
+      max_completion_tokens: 1024,
       thinking: { type: 'enabled' },
       reasoning_effort: 'max',
     })

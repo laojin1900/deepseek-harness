@@ -74,6 +74,18 @@ export interface LlmApi {
     }>,
     signal?: AbortSignal,
   ): Promise<RpcResponse<{ models: DiscoveredModelView[] }>>
+
+  /**
+   * Query one provider's quota/balance for the picker's provider-header badge.
+   * The host resolves the owning settings namespace from its configurable
+   * provider directory. The reply is already shaped for display and carries an
+   * explicit reliability status; a provider without a real balance endpoint
+   * answers `unavailable` rather than a fabricated number (recipe §7).
+   */
+  quota(
+    request: RpcRequest<{ provider: string }>,
+    signal?: AbortSignal,
+  ): Promise<RpcResponse<{ quota: QuotaView }>>
 }
 
 /** Wire view of one model an interrogated endpoint advertises. */
@@ -86,4 +98,14 @@ export interface DiscoveredModelView {
   contextWindow?: number
   /** Maximum output tokens, when disclosed. */
   maxTokens?: number
+}
+
+/** Wire view of one provider quota answer, shaped for the header badge. */
+export interface QuotaView {
+  /** Reliability status: ok / unavailable / error. */
+  status: 'ok' | 'unavailable' | 'error'
+  /** Short display text (e.g. "93%", "13.2M", "余量不可查"). */
+  text: string
+  /** Tooltip detail: source, plan, and per-metric remaining/used. */
+  detail?: string
 }

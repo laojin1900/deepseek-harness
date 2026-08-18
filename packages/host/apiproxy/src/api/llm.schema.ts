@@ -6,7 +6,7 @@
 import { z } from 'zod'
 import type { RequestPayload, ResponseValue } from './rpc-map.ts'
 import type { Wire } from './rpc.schema.ts'
-import type { ConfigurableProviderView, DiscoveredModelView } from './llm.ts'
+import type { ConfigurableProviderView, DiscoveredModelView, QuotaView } from './llm.ts'
 import { modelCatalogFailureSchema, modelProviderGroupSchema } from './sessions.schema.ts'
 
 /** ConfigurableProviderView row of llm.providers. */
@@ -62,3 +62,20 @@ export const llmDiscoverModelsRequestSchema = z.object({
 export const llmDiscoverModelsValueSchema = z.object({
   models: z.array(discoveredModelViewSchema),
 }) satisfies z.ZodType<Wire<ResponseValue<'llm.discoverModels'>>>
+
+/** QuotaView of llm.quota. */
+export const quotaViewSchema = z.object({
+  status: z.enum(['ok', 'unavailable', 'error']),
+  text: z.string().min(1),
+  detail: z.string().min(1).optional(),
+}) satisfies z.ZodType<Wire<QuotaView>>
+
+/** llm.quota request payload. */
+export const llmQuotaRequestSchema = z.object({
+  provider: z.string().min(1),
+}) satisfies z.ZodType<Wire<RequestPayload<'llm.quota'>>>
+
+/** llm.quota response value. */
+export const llmQuotaValueSchema = z.object({
+  quota: quotaViewSchema,
+}) satisfies z.ZodType<Wire<ResponseValue<'llm.quota'>>>

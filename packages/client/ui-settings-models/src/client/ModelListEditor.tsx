@@ -290,6 +290,26 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
     })
   }
 
+  // A header checkbox drives every candidate at once. The dialog opens with the
+  // not-yet-configured rows picked, so the master box is checked only when that
+  // default holds for the whole list; otherwise it shows the partial state.
+  const allPicked = candidates !== undefined && candidates.length > 0 && picked.size === candidates.length
+
+  /** Reflect the partial pick on the master box: checked only when all are. */
+  const selectAllRef = (element: HTMLInputElement | null): void => {
+    if (element !== null && candidates !== undefined) {
+      element.indeterminate = picked.size > 0 && picked.size < candidates.length
+    }
+  }
+
+  const toggleSelectAll = (): void => {
+    if (candidates === undefined) return
+    // A second click on a full list clears it; anything else fills it. Adoption
+    // keeps a row the user already tuned, so selecting the configured rows too
+    // is safe — their capacities are not overwritten.
+    setPicked(allPicked ? new Set() : new Set(candidates.map(candidate => candidate.id)))
+  }
+
   // A route the adapter already describes answers without an endpoint; only a
   // draft with neither has nothing to ask about.
   const askable = probe.provider !== undefined || (probe.baseURL !== undefined && probe.baseURL.length > 0)
@@ -445,6 +465,25 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
           </>
         )}
       >
+        {candidates !== undefined
+          ? (
+            <div className={styles['candidateHead']}>
+              <label className={styles['candidateSelectAllLabel']}>
+                <input
+                  type="checkbox"
+                  className={styles['candidateSelectAll']}
+                  checked={allPicked}
+                  ref={selectAllRef}
+                  onChange={toggleSelectAll}
+                />
+                <span>{t('fetchSelectAll')}</span>
+              </label>
+              <span className={styles['candidateCount']}>
+                {picked.size} / {candidates.length}
+              </span>
+            </div>
+          )
+          : null}
         <ul className={styles['candidateList']}>
           {(candidates ?? []).map(candidate => (
             <li key={candidate.id} className={styles['candidate']}>
