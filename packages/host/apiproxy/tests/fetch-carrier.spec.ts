@@ -281,6 +281,9 @@ function fakeApi(overrides: Partial<{ muxFrames: MuxFrame[]; hostFrames: HostFra
       async discoverModels(request) {
         return { rpcId: request.rpcId, result: { ok: true, value: { models: [] } } }
       },
+      async quota(request) {
+        return { rpcId: request.rpcId, result: { ok: true, value: { quota: { status: 'unavailable', text: '余量不可查' } } } }
+      },
     },
     events: {
       mux: (_request, signal) => stream(muxFrames, signal),
