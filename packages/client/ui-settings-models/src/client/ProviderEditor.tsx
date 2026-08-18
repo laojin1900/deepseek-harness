@@ -32,6 +32,7 @@ import {
 } from './DeepSeekModelsEditor.tsx'
 import { apiKeyFailure } from './apiKey.ts'
 import { EditorFooter } from './EditorFooter.tsx'
+import { IMAGE_INPUT_OFF, IMAGE_INPUT_ON, imageInputOn } from './imageInput.ts'
 import { ModelListEditor } from './ModelListEditor.tsx'
 import { deriveKeyRef, messageOf, protocolChoices } from './store.ts'
 import type { en } from './locales.ts'
@@ -199,6 +200,35 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
     // both adapters would accept that non-empty string as a real value.
     const value = next === undefined || next.trim().length === 0 ? undefined : next
     setDraft(current => value === undefined ? deletePath(current, [key]) : setPath(current, [key], value))
+  }
+
+  // The route-level modality fallback the image-input switch shows: the draft
+  // first, then the stored effective profile, then the adapter's text-only
+  // default. The draft is what this card edits, so toggling writes or drops
+  // `defaultInput` against the layer beneath — see `toggleRouteImage`.
+  const routeInput = (): readonly string[] | undefined => {
+    for (const source of [draft, fallback]) {
+      const value = getPath(source, ['defaultInput'])
+      if (Array.isArray(value) && value.length > 0) return value as readonly string[]
+    }
+    return undefined
+  }
+  const routeImageOn = imageInputOn(routeInput())
+  const toggleRouteImage = (on: boolean): void => {
+    setDraft((current) => {
+      if (on) return setPath(current, ['defaultInput'], [...IMAGE_INPUT_ON])
+      // Off means "do not accept images". Dropping the user override is the
+      // minimal write when the layer beneath already answers text-only (or
+      // says nothing, so the adapter default applies); only a base layer that
+      // pins images needs an explicit text-only list to override it.
+      const baseValue = getPath(namespace.base, [...settingsPath, 'defaultInput'])
+      const baseOn = imageInputOn(
+        Array.isArray(baseValue) && baseValue.length > 0 ? baseValue as readonly string[] : undefined,
+      )
+      return baseOn
+        ? setPath(current, ['defaultInput'], [...IMAGE_INPUT_OFF])
+        : deletePath(current, ['defaultInput'])
+    })
   }
 
   // The model list is validated by the same per-row checker for both families,
@@ -445,6 +475,26 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
                     {protocols.map(choice => <option key={choice} value={choice}>{choice}</option>)}
                   </select>
                 </div>
+              )
+              : null}
+            {/* The image-input switch sits beside the model catalog it answers
+                for — pi-ai's only family with a route-level fallback. */}
+            {family === 'pi-ai'
+              ? (
+                <>
+                  <label className={styles['imageInputRow']}>
+                    <input
+                      type="checkbox"
+                      className={styles['imageInputCheckbox']}
+                      checked={routeImageOn}
+                      aria-label={t('imageInput')}
+                      disabled={disabled}
+                      onChange={(event) => { toggleRouteImage(event.target.checked) }}
+                    />
+                    <span className={styles['fieldLabel']}>{t('imageInput')}</span>
+                  </label>
+                  <p className={styles['advancedHint']}>{t('imageInputHint')}</p>
+                </>
               )
               : null}
             {/* Both families edit the same rows through the same contract; only

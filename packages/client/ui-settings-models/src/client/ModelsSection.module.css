@@ -303,6 +303,19 @@
   color: var(--dsw-alias-label-tertiary);
 }
 
+/* Route-level image-input switch: a labeled checkbox row reading like the
+   other customized fields, with the same tertiary hint beneath. */
+.imageInputRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.imageInputCheckbox {
+  margin: 0;
+}
+
 .editorActions {
   display: flex;
   justify-content: flex-end;
@@ -519,6 +532,12 @@
 }
 
 .modelFieldLabel {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.modelFieldHint {
   color: var(--dsw-alias-label-tertiary);
   font-size: 12px;
   line-height: 18px;

@@ -26,11 +26,13 @@ const PiAiConfig = Schema.object({
     displayName: Schema.string(),
     api: Schema.union(PROTOCOLS),
     baseURL: Schema.string(),
+    defaultInput: Schema.array(Schema.union(['text', 'image'])),
     models: Schema.array(Schema.object({
       id: Schema.string().required(),
       name: Schema.string(),
       contextWindow: Schema.number(),
       maxTokens: Schema.number(),
+      input: Schema.array(Schema.union(['text', 'image'])),
     })),
     reasoning: Schema.union(['off', 'high']),
   })),
@@ -474,11 +476,14 @@ describe('endpoint interrogation', () => {
     openEditor('openai')
 
     fireEvent.click(screen.getByText(en.fetchModels))
+    const dialog = await screen.findByRole('dialog')
     await screen.findByText(en.fetchTitle)
     // The already-configured row starts unchecked; the new one starts checked.
     // The master box sits above the rows and reflects the partial pick.
     const selectAll = screen.getByRole('checkbox', { name: en.fetchSelectAll }) as HTMLInputElement
-    const boxes = [...document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')]
+    // Scoped to the dialog: the editor card's own route image-input switch is
+    // a checkbox too and must not be counted as a candidate.
+    const boxes = [...dialog.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')]
       .filter(box => box !== selectAll)
     expect(boxes.map(box => box.checked)).toEqual([false, true])
     expect(selectAll.indeterminate).toBe(true)
@@ -595,9 +600,10 @@ describe('endpoint interrogation', () => {
     openEditor('openai')
 
     fireEvent.click(screen.getByText(en.fetchModels))
+    const dialog = await screen.findByRole('dialog')
     await screen.findByText(en.fetchTitle)
     const selectAll = screen.getByRole('checkbox', { name: en.fetchSelectAll }) as HTMLInputElement
-    const boxes = [...document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')]
+    const boxes = [...dialog.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')]
       .filter(box => box !== selectAll)
     const first = boxes[0] as HTMLInputElement
     fireEvent.click(first)
@@ -618,10 +624,11 @@ describe('endpoint interrogation', () => {
     openEditor('openai')
 
     fireEvent.click(screen.getByText(en.fetchModels))
+    const dialog = await screen.findByRole('dialog')
     await screen.findByText(en.fetchTitle)
     const selectAll = screen.getByRole('checkbox', { name: en.fetchSelectAll }) as HTMLInputElement
     const candidateBoxes = (): HTMLInputElement[] =>
-      [...document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')]
+      [...dialog.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')]
         .filter(box => box !== selectAll)
 
     // Nothing configured yet, so every candidate starts picked and the master
@@ -763,7 +770,9 @@ describe('hand-declared providers', () => {
 
     mountCard()
     fireEvent.change(screen.getByLabelText(en.customRoute), { target: { value: 'acme' } })
-    expect(fields()).toEqual([en.customRoute, en.customDisplayName, en.baseUrl, en.customApi, en.keyInput])
+    expect(fields()).toEqual([
+      en.customRoute, en.customDisplayName, en.baseUrl, en.customApi, en.keyInput, en.imageInput,
+    ])
     cleanup()
 
     // A shipped route's models each carry their own protocol, so its editor
@@ -771,7 +780,7 @@ describe('hand-declared providers', () => {
     await mountSection({ providers: { openai: { apiKeyEnv: 'OPENAI_API_KEY' } } })
     openEditor('openai')
     fireEvent.click(screen.getByText(en.customized))
-    expect(fields()).toEqual([en.keyInput, en.baseUrl])
+    expect(fields()).toEqual([en.keyInput, en.baseUrl, en.imageInput])
     cleanup()
 
     // A hand-declared route named its own protocol at creation, so editing it
@@ -781,7 +790,7 @@ describe('hand-declared providers', () => {
       declaredRoutes: ['acme-gateway'],
     })
     openEditor('acme-gateway')
-    expect(fields()).toEqual([en.keyInput, en.customDisplayName, en.baseUrl, en.customApi])
+    expect(fields()).toEqual([en.keyInput, en.customDisplayName, en.baseUrl, en.customApi, en.imageInput])
   })
 
   it('renames a declared route and falls back to its id when the name is cleared', async () => {
@@ -1303,6 +1312,159 @@ describe('hand-declared providers', () => {
 
     await waitFor(() => { expect(onClose).toHaveBeenCalledWith(true) })
     expect(set).not.toHaveBeenCalled()
+  })
+})
+
+describe('image input switches', () => {
+  /** The create card, scripted the same way the hand-declared suite mounts it. */
+  function mountCard(
+    overrides: Partial<Parameters<typeof CustomProviderCard>[0]> = {},
+    wire: Parameters<typeof scriptedFace>[0] = {},
+  ) {
+    const scripted = scriptedFace(wire)
+    const onClose = vi.fn()
+    render(
+      <CustomProviderCard
+        taken={['openai']}
+        protocols={PROTOCOLS}
+        revision={7}
+        api={scripted.face as never}
+        t={t}
+        readOnly={false}
+        onClose={onClose}
+        {...overrides}
+      />,
+    )
+    return { ...scripted, onClose }
+  }
+
+  it('writes the route fallback when the switch is turned on', async () => {
+    const { mutate } = await mountSection()
+    openEditor('openai')
+
+    const toggle = screen.getByRole('checkbox', { name: en.imageInput }) as HTMLInputElement
+    expect(toggle.checked).toBe(false)
+    fireEvent.click(toggle)
+    expect(toggle.checked).toBe(true)
+    fireEvent.click(screen.getByText(en.apply))
+
+    await waitFor(() => { expect(mutate).toHaveBeenCalled() })
+    expect(firstMutate(mutate).ops)
+      .toContainEqual({ op: 'set', path: ['providers', 'openai', 'defaultInput'], value: ['text', 'image'] })
+  })
+
+  it('writes an explicit text-only list to override a base layer that pins images', async () => {
+    const { mutate } = await mountSection({
+      providers: { openai: { baseURL: 'https://proxy.example/v1', defaultInput: ['text', 'image'] } },
+      baseProviders: { openai: { defaultInput: ['text', 'image'] } },
+      userProviders: {},
+    })
+    openEditor('openai')
+
+    // The composition pins images, so the switch opens on; turning it off must
+    // write an override rather than drop the user layer and inherit it back.
+    const toggle = screen.getByRole('checkbox', { name: en.imageInput }) as HTMLInputElement
+    expect(toggle.checked).toBe(true)
+    fireEvent.click(toggle)
+    fireEvent.click(screen.getByText(en.apply))
+
+    await waitFor(() => { expect(mutate).toHaveBeenCalled() })
+    expect(firstMutate(mutate).ops)
+      .toContainEqual({ op: 'set', path: ['providers', 'openai', 'defaultInput'], value: ['text'] })
+  })
+
+  it('leaves the route fallback unset when the switch stays off', async () => {
+    const { mutate } = await mountSection()
+    openEditor('openai')
+
+    expect((screen.getByRole('checkbox', { name: en.imageInput }) as HTMLInputElement).checked).toBe(false)
+    fireEvent.click(screen.getByText(en.apply))
+    expect(mutate).not.toHaveBeenCalled()
+  })
+
+  it('drops the stored fallback when the switch turns off against an unpinned base', async () => {
+    const { mutate } = await mountSection({
+      providers: { openai: { baseURL: 'https://proxy.example/v1', defaultInput: ['text', 'image'] } },
+    })
+    openEditor('openai')
+
+    const toggle = screen.getByRole('checkbox', { name: en.imageInput }) as HTMLInputElement
+    expect(toggle.checked).toBe(true)
+    fireEvent.click(toggle)
+    fireEvent.click(screen.getByText(en.apply))
+
+    await waitFor(() => { expect(mutate).toHaveBeenCalled() })
+    // Nothing beneath pins images, so the off position is the adapter default
+    // itself: the minimal write drops the user override rather than restating
+    // a text-only list.
+    expect(firstMutate(mutate).ops)
+      .toContainEqual({ op: 'unset', path: ['providers', 'openai', 'defaultInput'] })
+  })
+
+  it('stores the create card switch with the profile', async () => {
+    const { mutate, onClose } = mountCard()
+
+    fireEvent.change(screen.getByLabelText(en.customRoute), { target: { value: 'acme-gateway' } })
+    fireEvent.change(screen.getByLabelText(en.baseUrl), { target: { value: 'https://gateway.acme.example/v1' } })
+    fireEvent.change(screen.getByLabelText(en.keyInput), { target: { value: 'gw-key' } })
+    fireEvent.click(screen.getByRole('button', { name: en.addModel }))
+    fireEvent.change(screen.getByLabelText(`${en.modelId} 1`), { target: { value: 'acme-large' } })
+    fireEvent.click(screen.getByRole('checkbox', { name: en.imageInput }))
+    fireEvent.click(screen.getByText(en.create))
+
+    await waitFor(() => { expect(onClose).toHaveBeenCalledWith(true) })
+    expect(firstMutate(mutate).ops[0]?.value).toMatchObject({ defaultInput: ['text', 'image'] })
+  })
+
+  it('shows a stored model list back and writes the picked position', async () => {
+    const { mutate } = await mountSection({
+      providers: {
+        openai: { baseURL: 'https://proxy.example/v1', models: [{ id: 'm', input: ['text', 'image'] }] },
+      },
+    })
+    openEditor('openai')
+    expandModel(1)
+
+    const picker = screen.getByLabelText(`${en.modelImageInput} 1`) as HTMLSelectElement
+    expect(picker.value).toBe('on')
+    fireEvent.change(picker, { target: { value: 'off' } })
+    fireEvent.click(screen.getByText(en.apply))
+
+    await waitFor(() => { expect(mutate).toHaveBeenCalled() })
+    expect(firstMutate(mutate).ops[0]?.value).toEqual([{ id: 'm', input: ['text'] }])
+  })
+
+  it('writes text-and-images for a model whose picker is set on', async () => {
+    const { mutate } = await mountSection({
+      providers: { openai: { baseURL: 'https://proxy.example/v1', models: [{ id: 'm' }] } },
+    })
+    openEditor('openai')
+    expandModel(1)
+
+    const picker = screen.getByLabelText(`${en.modelImageInput} 1`) as HTMLSelectElement
+    expect(picker.value).toBe('inherit')
+    fireEvent.change(picker, { target: { value: 'on' } })
+    fireEvent.click(screen.getByText(en.apply))
+
+    await waitFor(() => { expect(mutate).toHaveBeenCalled() })
+    expect(firstMutate(mutate).ops[0]?.value).toEqual([{ id: 'm', input: ['text', 'image'] }])
+  })
+
+  it('drops the model input key back to inherit', async () => {
+    const { mutate } = await mountSection({
+      providers: {
+        openai: { baseURL: 'https://proxy.example/v1', models: [{ id: 'm', input: ['text', 'image'] }] },
+      },
+    })
+    openEditor('openai')
+    expandModel(1)
+
+    const picker = screen.getByLabelText(`${en.modelImageInput} 1`) as HTMLSelectElement
+    fireEvent.change(picker, { target: { value: 'inherit' } })
+    fireEvent.click(screen.getByText(en.apply))
+
+    await waitFor(() => { expect(mutate).toHaveBeenCalled() })
+    expect(firstMutate(mutate).ops[0]?.value).toEqual([{ id: 'm' }])
   })
 })
 

@@ -26,6 +26,7 @@ import type { ReactNode } from 'react'
 import type { IApiClient } from '@deepseek-ai/dsh-api-remotes/client'
 import { apiKeyFailure } from './apiKey.ts'
 import { EditorFooter } from './EditorFooter.tsx'
+import { IMAGE_INPUT_ON } from './imageInput.ts'
 import { validateDeepSeekModels } from './DeepSeekModelsEditor.tsx'
 import { ModelListEditor } from './ModelListEditor.tsx'
 import type { ModelDraft } from './ModelListEditor.tsx'
@@ -84,6 +85,9 @@ export function CustomProviderCard(props: CustomProviderCardProps): ReactNode {
   const [protocol, setProtocol] = useState(protocols[0] ?? '')
   const [keyDraft, setKeyDraft] = useState('')
   const [models, setModels] = useState<readonly ModelDraft[]>([])
+  // Off by default: a route nothing pins is text-only, which is also what
+  // omitting `defaultInput` keeps. Only an explicit switch-on writes the list.
+  const [routeImageOn, setRouteImageOn] = useState(false)
   const [busy, setBusy] = useState(false)
   const [failure, setFailure] = useState<string | undefined>(undefined)
   /**
@@ -142,6 +146,7 @@ export function CustomProviderCard(props: CustomProviderCardProps): ReactNode {
         ...storesKey ? { apiKeyEnv: keyRef } : {},
         api: protocol,
         baseURL,
+        ...routeImageOn ? { defaultInput: [...IMAGE_INPUT_ON] } : {},
         models: models.map(model => ({ ...model })),
       }
       const response = await api.settings.mutate({
@@ -264,6 +269,20 @@ export function CustomProviderCard(props: CustomProviderCardProps): ReactNode {
           ? null
           : <p className={styles['error']}>{t(keyFailure === 'keyBlank' ? 'keyBlankNew' : keyFailure)}</p>}
       </div>
+      {/* The switch sits beside the model catalog it answers for; off by
+          default, matching the text-only route a fresh profile inherits. */}
+      <label className={styles['imageInputRow']}>
+        <input
+          type="checkbox"
+          className={styles['imageInputCheckbox']}
+          checked={routeImageOn}
+          aria-label={t('imageInput')}
+          disabled={profileDisabled}
+          onChange={(event) => { setRouteImageOn(event.target.checked) }}
+        />
+        <span className={styles['fieldLabel']}>{t('imageInput')}</span>
+      </label>
+      <p className={styles['advancedHint']}>{t('imageInputHint')}</p>
       <ModelListEditor
         models={models}
         onChange={setModels}

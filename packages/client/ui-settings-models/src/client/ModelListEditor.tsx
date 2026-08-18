@@ -20,6 +20,8 @@ import type { DiscoveredModelView, IApiClient } from '@deepseek-ai/dsh-api-remot
 import { Button, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import { formatCapacity, parseCapacity } from './DeepSeekModelsEditor.tsx'
 import type { DeepSeekModelDraft } from './DeepSeekModelsEditor.tsx'
+import { modelImageInputChoice, modelImageInputList } from './imageInput.ts'
+import type { ModelImageInputChoice } from './imageInput.ts'
 import { messageOf } from './store.ts'
 import type { en } from './locales.ts'
 import styles from './ModelsSection.module.css'
@@ -187,6 +189,13 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
   const capacityText = (model: ModelDraft, index: number, field: CapacityField): string =>
     editing.get(bufferKey(index, field)) ?? capacitySpelling(numberOf(model, field))
 
+  /** Store a row's picked modality position; inherit drops the key. */
+  const editImageInput = (index: number, choice: string): void => {
+    if (choice === 'inherit' || choice === 'on' || choice === 'off') {
+      patch(index, { input: modelImageInputList(choice as ModelImageInputChoice) })
+    }
+  }
+
   /** Drop one row's entries and shift the rows after it down, in one pass. */
   const reindexOnRemove = (
     current: ReadonlyMap<string, string>,
@@ -210,7 +219,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
     })
   }
 
-  const patch = (index: number, next: Record<string, string | number | undefined>): void => {
+  const patch = (index: number, next: Record<string, string | number | readonly string[] | undefined>): void => {
     onChange(models.map((model, at) => {
       if (at !== index) return model
       // Rebuilt rather than spread over: an emptied optional field has to leave
@@ -436,6 +445,21 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
                     disabled={disabled}
                     onChange={(event) => { editCapacity(index, 'maxTokens', event.target.value) }}
                   />
+                </label>
+                <label className={styles['modelField']}>
+                  <span className={styles['modelFieldLabel']}>{t('modelImageInput')}</span>
+                  <select
+                    className={`${styles['input']} ${styles['selectInput']}`}
+                    value={modelImageInputChoice(model.input)}
+                    aria-label={`${t('modelImageInput')} ${index + 1}`}
+                    disabled={disabled}
+                    onChange={(event) => { editImageInput(index, event.target.value) }}
+                  >
+                    <option value="inherit">{t('modelImageInputInherit')}</option>
+                    <option value="on">{t('modelImageInputOn')}</option>
+                    <option value="off">{t('modelImageInputOff')}</option>
+                  </select>
+                  <span className={styles['modelFieldHint']}>{t('modelImageInputHint')}</span>
                 </label>
               </div>
             )
