@@ -190,10 +190,8 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
     editing.get(bufferKey(index, field)) ?? capacitySpelling(numberOf(model, field))
 
   /** Store a row's picked modality position; inherit drops the key. */
-  const editImageInput = (index: number, choice: string): void => {
-    if (choice === 'inherit' || choice === 'on' || choice === 'off') {
-      patch(index, { input: modelImageInputList(choice as ModelImageInputChoice) })
-    }
+  const editImageInput = (index: number, choice: ModelImageInputChoice): void => {
+    patch(index, { input: modelImageInputList(choice) })
   }
 
   /** Drop one row's entries and shift the rows after it down, in one pass. */
@@ -453,7 +451,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
                     value={modelImageInputChoice(model.input)}
                     aria-label={`${t('modelImageInput')} ${index + 1}`}
                     disabled={disabled}
-                    onChange={(event) => { editImageInput(index, event.target.value) }}
+                    onChange={(event) => { editImageInput(index, event.target.value as ModelImageInputChoice) }}
                   >
                     <option value="inherit">{t('modelImageInputInherit')}</option>
                     <option value="on">{t('modelImageInputOn')}</option>

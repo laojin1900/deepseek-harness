@@ -153,6 +153,28 @@ async function mountSection(options: Parameters<typeof scriptedFace>[0] = {}) {
   return { ...scripted, controller }
 }
 
+/** The create card, scripted the same way the hand-declared suite mounts it. */
+function mountCard(
+  overrides: Partial<Parameters<typeof CustomProviderCard>[0]> = {},
+  wire: Parameters<typeof scriptedFace>[0] = {},
+) {
+  const scripted = scriptedFace(wire)
+  const onClose = vi.fn()
+  render(
+    <CustomProviderCard
+      taken={['openai']}
+      protocols={PROTOCOLS}
+      revision={7}
+      api={scripted.face as never}
+      t={t}
+      readOnly={false}
+      onClose={onClose}
+      {...overrides}
+    />,
+  )
+  return { ...scripted, onClose }
+}
+
 /** Open the editor of one configured row and expand its customized fold. */
 function openEditor(provider: string): void {
   const row = screen.getByText(provider).closest('li')
@@ -704,27 +726,6 @@ describe('provider rows', () => {
 })
 
 describe('hand-declared providers', () => {
-  function mountCard(
-    overrides: Partial<Parameters<typeof CustomProviderCard>[0]> = {},
-    wire: Parameters<typeof scriptedFace>[0] = {},
-  ) {
-    const scripted = scriptedFace(wire)
-    const onClose = vi.fn()
-    render(
-      <CustomProviderCard
-        taken={['openai']}
-        protocols={PROTOCOLS}
-        revision={7}
-        api={scripted.face as never}
-        t={t}
-        readOnly={false}
-        onClose={onClose}
-        {...overrides}
-      />,
-    )
-    return { ...scripted, onClose }
-  }
-
   it('writes the whole profile and the key under the derived reference', async () => {
     const { mutate, set, onClose } = mountCard()
 
@@ -1316,28 +1317,6 @@ describe('hand-declared providers', () => {
 })
 
 describe('image input switches', () => {
-  /** The create card, scripted the same way the hand-declared suite mounts it. */
-  function mountCard(
-    overrides: Partial<Parameters<typeof CustomProviderCard>[0]> = {},
-    wire: Parameters<typeof scriptedFace>[0] = {},
-  ) {
-    const scripted = scriptedFace(wire)
-    const onClose = vi.fn()
-    render(
-      <CustomProviderCard
-        taken={['openai']}
-        protocols={PROTOCOLS}
-        revision={7}
-        api={scripted.face as never}
-        t={t}
-        readOnly={false}
-        onClose={onClose}
-        {...overrides}
-      />,
-    )
-    return { ...scripted, onClose }
-  }
-
   it('writes the route fallback when the switch is turned on', async () => {
     const { mutate } = await mountSection()
     openEditor('openai')
@@ -1377,7 +1356,7 @@ describe('image input switches', () => {
     const { mutate } = await mountSection()
     openEditor('openai')
 
-    expect((screen.getByRole('checkbox', { name: en.imageInput }) as HTMLInputElement).checked).toBe(false)
+    expect(screen.getByRole<HTMLInputElement>('checkbox', { name: en.imageInput }).checked).toBe(false)
     fireEvent.click(screen.getByText(en.apply))
     expect(mutate).not.toHaveBeenCalled()
   })
