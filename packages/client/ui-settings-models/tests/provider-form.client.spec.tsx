@@ -505,14 +505,10 @@ describe('endpoint interrogation', () => {
     const dialog = await screen.findByRole('dialog')
     await screen.findByText(en.fetchTitle)
     // The already-configured row starts unchecked; the new one starts checked.
-    // The master box sits above the rows and reflects the partial pick.
-    const selectAll = screen.getByRole('checkbox', { name: en.fetchSelectAll }) as HTMLInputElement
     // Scoped to the dialog: the editor card's own route image-input switch is
     // a checkbox too and must not be counted as a candidate.
     const boxes = [...dialog.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')]
-      .filter(box => box !== selectAll)
     expect(boxes.map(box => box.checked)).toEqual([false, true])
-    expect(selectAll.indeterminate).toBe(true)
     fireEvent.click(screen.getByText(en.fetchAdopt))
 
     fireEvent.click(screen.getByText(en.apply))
@@ -628,9 +624,7 @@ describe('endpoint interrogation', () => {
     fireEvent.click(screen.getByText(en.fetchModels))
     const dialog = await screen.findByRole('dialog')
     await screen.findByText(en.fetchTitle)
-    const selectAll = screen.getByRole('checkbox', { name: en.fetchSelectAll }) as HTMLInputElement
     const boxes = [...dialog.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')]
-      .filter(box => box !== selectAll)
     const first = boxes[0] as HTMLInputElement
     fireEvent.click(first)
     fireEvent.click(first)

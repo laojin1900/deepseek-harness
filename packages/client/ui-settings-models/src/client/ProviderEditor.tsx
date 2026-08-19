@@ -219,7 +219,7 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
   // `defaultInput` against the layer beneath — see `toggleRouteImage`.
   const routeInput = (): readonly string[] | undefined => {
     for (const source of [draft, fallback]) {
-      const value = getPath(source, ['defaultInput'])
+      const value = schema.getPath(source, ['defaultInput'])
       if (Array.isArray(value) && value.length > 0) return value as readonly string[]
     }
     return undefined
@@ -227,18 +227,18 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
   const routeImageOn = imageInputOn(routeInput())
   const toggleRouteImage = (on: boolean): void => {
     setDraft((current) => {
-      if (on) return setPath(current, ['defaultInput'], [...IMAGE_INPUT_ON])
+      if (on) return schema.setPath(current, ['defaultInput'], [...IMAGE_INPUT_ON])
       // Off means "do not accept images". Dropping the user override is the
       // minimal write when the layer beneath already answers text-only (or
       // says nothing, so the adapter default applies); only a base layer that
       // pins images needs an explicit text-only list to override it.
-      const baseValue = getPath(namespace.base, [...settingsPath, 'defaultInput'])
+      const baseValue = schema.getPath(namespace.base, [...settingsPath, 'defaultInput'])
       const baseOn = imageInputOn(
         Array.isArray(baseValue) && baseValue.length > 0 ? baseValue as readonly string[] : undefined,
       )
       return baseOn
-        ? setPath(current, ['defaultInput'], [...IMAGE_INPUT_OFF])
-        : deletePath(current, ['defaultInput'])
+        ? schema.setPath(current, ['defaultInput'], [...IMAGE_INPUT_OFF])
+        : schema.deletePath(current, ['defaultInput'])
     })
   }
 
