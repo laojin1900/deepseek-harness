@@ -669,32 +669,10 @@ select.input {
   --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
 }
 
-.candidateHead {
+.candidateActions {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 0 4px 8px;
+  justify-content: flex-end;
   margin-bottom: 6px;
-  border-bottom: 1px solid var(--dsw-alias-border-l2);
-}
-
-.candidateSelectAllLabel {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-  font-size: 13px;
-}
-
-.candidateSelectAll {
-  margin: 0;
-}
-
-.candidateCount {
-  font-size: 12px;
-  line-height: 18px;
-  opacity: 0.75;
 }
 
 .candidateList {
