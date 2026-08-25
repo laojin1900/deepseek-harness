@@ -7,13 +7,14 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname } from 'node:path'
+import { z as zod } from 'zod'
 import type { Context } from '@deepseek-ai/cordis'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import type { Agent, ModelSelection, ModelSelectionRef, AgentOptions, AgentStatus } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-presets/types'
 import { AttachmentError, admitEncodedImages } from '@deepseek-ai/dsh-attachment'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import { contentHasImage, createUserMessage, freezeMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, freezeMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { errorChain } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, MessageSource } from '@deepseek-ai/dsh-llm'
 import { isAppendSurfaceEvent, isJsonValue } from '@deepseek-ai/dsh-session'
@@ -1231,10 +1232,10 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
   ctx.inject(['sessionProjections'], (projectionCtx) => {
     projectionCtx.sessionProjections.register<'sessionListMetadata', SessionListMetadata>({
       key: 'sessionListMetadata',
-      schema: sessionListMetadataProjectionSchema,
+      stateSchema: sessionListMetadataProjectionSchema,
       init: () => ({ blank: true, lastPromptAt: null }),
       apply: applySessionListMetadata,
-      view: state => state,
+      wire: { viewSchema: sessionListMetadataProjectionSchema, view: state => state },
       stateVersion: 1,
     })
   })
@@ -1255,10 +1256,10 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
   ctx.inject(['sessionProjections', 'attachments'], (projectionCtx) => {
     projectionCtx.sessionProjections.register<'imageLimits', null>({
       key: 'imageLimits',
-      schema: imageLimitsProjectionSchema,
+      stateSchema: zod.null(),
       init: () => null,
       apply: state => state,
-      view: () => projectionCtx.attachments.imageLimits,
+      wire: { viewSchema: imageLimitsProjectionSchema, view: () => projectionCtx.attachments.imageLimits },
       stateVersion: 1,
     })
   })
@@ -2203,25 +2204,6 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
                 ? {}
                 : { reasoningEffort: ReasoningEffortId(reasoningEffort) },
             })
-            // Multi-turn history is not bound to the selected model's modality:
-            // already-logged images degrade to placeholder text at dispatch when
-            // the model cannot see them, so a session that once carried an image
-            // may still switch to a text-only model. Only images still QUEUED
-            // for delivery are new content, and admitting them against a
-            // text-only model would silently replace the attachment the user
-            // just handed over — refuse the switch for that case alone.
-            const pendingImage = [...found.agent.inbox.nextTurn, ...found.agent.inbox.nextStep]
-              .some(message => contentHasImage(message.content))
-            if (pendingImage) {
-              const info = await ctx.llm.resolveModelInfo(resolved.provider, resolved.model)
-              if (info.inputModalities !== undefined && !info.inputModalities.includes('image')) {
-                return err(request, {
-                  code: 'model-unavailable',
-                  message: `Model "${resolved.model}" does not accept image input, and this session has queued image messages; select an image-capable model or wait for the queue to clear.`,
-                  details: { provider, model },
-                })
-              }
-            }
             const selected: ModelSelection = {
               provider: resolved.provider,
               model: resolved.model,

@@ -153,12 +153,7 @@ describe('Web session model selection', () => {
       validateImage,
       saveImage,
     }
-    ctx.provide('attachments', {
-      ...attachments,
-      saveImages(inputs: readonly Parameters<typeof saveImage>[0][]) {
-        return AttachmentStore.prototype.saveImages.call(attachments, inputs)
-      },
-    } as never)
+    ctx.provide('attachments', Object.setPrototypeOf(attachments, AttachmentStore.prototype) as never)
     const followup = vi.fn()
     Object.assign(agent, { followup })
     const api = createApiProxy(ctx, {
@@ -204,7 +199,7 @@ describe('Web session model selection', () => {
     await ctx.fiber.dispose()
   })
 
-  it('allows a text-only selection over logged images and refuses only while image messages stay queued', async () => {
+  it('allows a text-only selection while durable or pending images remain available for later models', async () => {
     const { ctx, agent, sessionId } = await harness()
     registerTextOnly(ctx)
     const api = createApiProxy(ctx, {
@@ -218,23 +213,20 @@ describe('Web session model selection', () => {
     agent.session.append('user/message', {
       id: 'image-message', role: 'user', source: { kind: 'user' }, content: [image],
     } as never, { surfaceOp: 'append' })
-    // Multi-turn history is not bound to the model's modality: an image already
-    // in the log degrades to placeholder text at dispatch, so the selection
-    // itself succeeds on a text-only model.
     expect(expectValue(await api.sessions.selectModel(request({
       sessionId, provider: 'text-only', model: 'plain',
     }))).selected).toEqual({ provider: 'text-only', model: 'plain' })
 
-    // A queued image is new content about to reach the model — admitting a
-    // text-only switch here would silently replace the attachment the user
-    // just handed over, so the switch is refused until the queue drains.
+    agent.session.append('user/message', {
+      id: 'summary', role: 'user', source: { kind: 'plugin', plugin: 'compact' },
+      content: [{ type: 'text', text: 'image summarized' }],
+    } as never, {
+      surfaceOp: { op: 'replace', start: 0, end: agent.session.events.length - 1 },
+      sourceEventSeqs: agent.session.events.map(event => event.seq),
+    })
     ;(agent.inbox.nextTurn as UserMessage[]).push({
       id: 'pending-image', role: 'user', source: { kind: 'user' }, content: [image],
     } as never)
-    expect((await api.sessions.selectModel(request({
-      sessionId, provider: 'text-only', model: 'plain',
-    }))).result).toMatchObject({ ok: false, error: { code: 'model-unavailable' } })
-    ;(agent.inbox.nextTurn as UserMessage[]).length = 0
     expect(expectValue(await api.sessions.selectModel(request({
       sessionId, provider: 'text-only', model: 'plain',
     }))).selected).toEqual({ provider: 'text-only', model: 'plain' })

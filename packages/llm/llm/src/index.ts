@@ -15,15 +15,12 @@ import type {
   LlmModelContext,
   LlmModelDiscoveryRequest,
   LlmModelInfo,
-  LlmQuotaRequest,
-  LlmQuotaResult,
   LlmResolvedModelInfo,
   LlmProviderInfo,
   ModelModality,
   StreamChunk,
 } from './types.ts'
 import { freezeMessage, type Message } from './message.ts'
-import { withoutImageBlocks } from './content.ts'
 import { resolveRetryPolicy } from './retry-policy.ts'
 import type { ResolvedRetryPolicy } from './retry-policy.ts'
 import type { ProviderRequestId } from './brand.ts'
@@ -32,6 +29,7 @@ import type { LlmCallConfig, LlmCallConfigAdapterDefaults } from './call-config.
 import { HarnessError, INVALID_CREDENTIAL_CODE } from './error.ts'
 import { normalizeLlmFailure } from './adapter-failure.ts'
 import { normalizeApiKey } from './api-key.ts'
+import { contentHasImage, projectImagesForTextModel } from './content.ts'
 
 export * from './attribution.ts'
 export * from './brand.ts'
@@ -162,7 +160,7 @@ export interface PreparedLlmCall {
   readonly retryPolicy: ResolvedRetryPolicy
   /** Detached context metadata resolved with the registration-bound call. */
   readonly context?: LlmModelContext
-  /** Detached input modalities resolved with the registration-bound call. */
+  /** Exact model modalities captured with the adapter dispatch generation. */
   readonly inputModalities?: readonly ModelModality[]
   /** Config fields materialized by the captured adapter rather than proposed by the caller. */
   readonly adapterDefaults: LlmCallConfigAdapterDefaults
@@ -173,6 +171,14 @@ export interface PreparedLlmCall {
    * @param options - fully assembled request carrying the prepared config.
    * @returns the chunk stream, including the `llm/stream` waterfall.
    */
+  stream(options: GenerateOptions): AsyncIterable<StreamChunk>
+}
+
+/** One adapter-owned model-resolution generation bound to its eventual stream call. */
+export interface PreparedAdapterCall {
+  /** Exact model metadata from the same adapter generation as {@link stream}. */
+  readonly model: LlmResolvedModelInfo
+  /** Dispatch through that generation without re-reading dynamic connection facts. */
   stream(options: GenerateOptions): AsyncIterable<StreamChunk>
 }
 
@@ -227,6 +233,22 @@ export abstract class LlmAdapter {
     _signal?: AbortSignal,
   ): Promise<LlmResolvedModelInfo> {
     return Promise.resolve({ provider, id: model, name: model })
+  }
+
+  /**
+   * Bind exact model metadata and the eventual request dispatch to one adapter generation.
+   * Dynamic adapters override this so settings changes between preparation and
+   * dispatch cannot combine one generation's capabilities with another's endpoint.
+   * @param provider - registered provider route.
+   * @param model - exact model id.
+   * @param signal - cancellation for model resolution.
+   * @returns model metadata and a one-generation stream entry point.
+   */
+  async prepareCall(provider: string, model: string, signal?: AbortSignal): Promise<PreparedAdapterCall> {
+    return {
+      model: await this.resolveModel(provider, model, signal),
+      stream: options => this.stream(options),
+    }
   }
 
   /**
@@ -292,10 +314,6 @@ export class LlmRuntime extends Service {
   private discoveries = new Map<
     string,
     (request: LlmModelDiscoveryRequest) => Promise<readonly LlmDiscoveredModel[]>
-  >()
-  private quotas = new Map<
-    string,
-    (request: LlmQuotaRequest) => Promise<LlmQuotaResult>
   >()
 
   constructor(ctx: Context) {
@@ -568,50 +586,6 @@ export class LlmRuntime extends Service {
   }
 
   /**
-   * Offer to answer quota/balance queries for the settings namespace this
-   * plugin owns. Disposed with the fiber.
-   * @param settingsNs - the namespace whose profiles this quota query serves.
-   * @param query - answers one provider's quota; must honor `request.signal`.
-   * @returns the disposer that withdraws the offer.
-   */
-  registerQuota(
-    settingsNs: string,
-    query: (request: LlmQuotaRequest) => Promise<LlmQuotaResult>,
-  ): () => void {
-    const dispose = this.ctx.effect(function* (this: LlmRuntime) {
-      if (settingsNs.length === 0) {
-        throw new LlmError('quota query needs a non-empty settings namespace', 'INVALID_QUOTA')
-      }
-      if (this.quotas.has(settingsNs)) {
-        throw new LlmError(`quota query for "${settingsNs}" is already registered`, 'DUPLICATE_QUOTA')
-      }
-      this.quotas.set(settingsNs, query)
-      yield () => {
-        this.quotas.delete(settingsNs)
-      }
-    }.bind(this), 'llm.registerQuota()')
-    return () => void dispose()
-  }
-
-  /**
-   * Ask one provider's quota/balance. The reply is already shaped for display,
-   * with an explicit reliability status (`ok` / `unavailable` / `error`).
-   * @param settingsNs - namespace whose registered query serves this provider.
-   * @param request - the provider to ask.
-   * @returns the quota result; throws when no query is registered.
-   */
-  async getQuota(settingsNs: string, request: LlmQuotaRequest): Promise<LlmQuotaResult> {
-    const query = this.quotas.get(settingsNs)
-    if (query === undefined) {
-      throw new LlmError(`no quota query is registered for "${settingsNs}"`, 'NO_QUOTA')
-    }
-    if (request.provider.length === 0) {
-      throw new LlmError('quota query needs a provider route', 'INVALID_QUOTA')
-    }
-    return query(request)
-  }
-
-  /**
    * Resolve the retry policy captured when one provider route was registered.
    * @param provider - registered provider route to inspect.
    * @returns the provider-owned policy, with normal defaults already resolved.
@@ -682,8 +656,17 @@ export class LlmRuntime extends Service {
     model: string,
     signal?: AbortSignal,
   ): Promise<LlmResolvedModelInfo> {
+    const resolved = await registration.adapter.resolveModel(registration.provider.id, model, signal)
+    return this.normalizeModelInfo(registration, model, resolved)
+  }
+
+  /** Validate and detach one adapter-returned exact model result. */
+  private normalizeModelInfo(
+    registration: AdapterRegistration,
+    model: string,
+    resolved: LlmResolvedModelInfo,
+  ): LlmResolvedModelInfo {
     const provider = registration.provider.id
-    const resolved = await registration.adapter.resolveModel(provider, model, signal)
     if (
       typeof resolved.provider !== 'string'
       || resolved.provider !== provider
@@ -788,8 +771,16 @@ export class LlmRuntime extends Service {
     registration: AdapterRegistration,
     config: LlmCallConfig,
     signal?: AbortSignal,
-  ): Promise<{ config: LlmCallConfig; context?: LlmModelContext; inputModalities?: readonly ModelModality[] }> {
+  ): Promise<{ config: LlmCallConfig; context?: LlmModelContext; modelInfo: LlmResolvedModelInfo }> {
     const info = await this.resolveModelInfoFor(registration, config.model, signal)
+    return this.resolveCallWithInfo(config, info)
+  }
+
+  /** Validate request controls against one already-bound exact model result. */
+  private resolveCallWithInfo(
+    config: LlmCallConfig,
+    info: LlmResolvedModelInfo,
+  ): { config: LlmCallConfig; context?: LlmModelContext; modelInfo: LlmResolvedModelInfo } {
     const defaulted = config.maxTokens === undefined && info.defaultMaxTokens !== undefined
       ? { ...config, maxTokens: info.defaultMaxTokens }
       : config
@@ -818,7 +809,7 @@ export class LlmRuntime extends Service {
     return {
       config: resolvedConfig,
       ...info.context === undefined ? {} : { context: info.context },
-      ...info.inputModalities === undefined ? {} : { inputModalities: info.inputModalities },
+      modelInfo: info,
     }
   }
 
@@ -832,14 +823,13 @@ export class LlmRuntime extends Service {
    */
   async prepareCall(config: LlmCallConfig, signal?: AbortSignal): Promise<PreparedLlmCall> {
     const registration = this.registration(config.provider)
-    const resolved = await this.resolveCallFor(registration, config, signal)
+    const adapterCall = await registration.adapter.prepareCall(config.provider, config.model, signal)
+    const modelInfo = this.normalizeModelInfo(registration, config.model, adapterCall.model)
+    const resolved = this.resolveCallWithInfo(config, modelInfo)
     const resolvedConfig = deepFreeze(structuredClone(resolved.config))
     const context = resolved.context === undefined
       ? undefined
       : deepFreeze(structuredClone(resolved.context))
-    const inputModalities = resolved.inputModalities === undefined
-      ? undefined
-      : deepFreeze([...resolved.inputModalities])
     const adapterDefaults = deepFreeze<LlmCallConfigAdapterDefaults>({
       ...config.reasoningEffort === undefined && resolvedConfig.reasoningEffort !== undefined
         ? { reasoningEffort: true }
@@ -854,7 +844,9 @@ export class LlmRuntime extends Service {
       retryPolicy: registration.retryPolicy,
       adapterDefaults,
       ...context === undefined ? {} : { context },
-      ...inputModalities === undefined ? {} : { inputModalities },
+      ...modelInfo.inputModalities === undefined
+        ? {}
+        : { inputModalities: Object.freeze([...modelInfo.inputModalities]) },
       stream: (options: GenerateOptions): AsyncIterable<StreamChunk> => {
         if (dispatched) {
           throw new LlmError('a prepared LLM call can only be dispatched once', 'INVALID_PREPARED_CALL')
@@ -869,7 +861,8 @@ export class LlmRuntime extends Service {
         return this.streamWithRegistration(options, {
           registration,
           config: resolvedConfig,
-          ...inputModalities === undefined ? {} : { inputModalities },
+          modelInfo,
+          dispatch: options => adapterCall.stream(options),
         })
       },
     })
@@ -898,45 +891,31 @@ export class LlmRuntime extends Service {
   }
 
   /**
-   * Degrade image blocks to placeholder text when the resolved model
-   * explicitly declares it does not accept image input. Session logs are
-   * never rewritten: this transform applies only to the request this exact
-   * dispatch hands to the adapter, so a session's history is not bound to
-   * the modality of the model currently selected for it.
-   * @param options - the fully resolved request about to reach the adapter.
-   * @param inputModalities - capability metadata resolved with the exact model.
-   * @returns the same request when nothing changes; otherwise an immutable filtered copy.
-   */
-  private withoutUnsupportedImages(
-    options: GenerateOptions,
-    inputModalities: readonly ModelModality[] | undefined,
-  ): GenerateOptions {
-    if (inputModalities === undefined || inputModalities.includes('image')) return options
-    const messages = options.messages.map((message) => {
-      const content = withoutImageBlocks(message.content)
-      return content === undefined ? message : freezeMessage({ ...message, content })
-    })
-    if (messages.every((message, index) => message === options.messages[index])) return options
-    const filtered = { ...options, messages }
-    return Object.isFrozen(options) ? deepFreeze(filtered) : filtered
-  }
-
-  /**
    * Final adapter boundary. Adapter selection, dispatch, iterator construction,
    * and iteration failures become one terminal failure chunk. Middleware and
    * downstream consumer failures remain thrown plugin or consumer errors.
    */
   private async * adapterStream(
     options: GenerateOptions,
-    prepared?: { registration: AdapterRegistration; config: LlmCallConfig; inputModalities?: readonly ModelModality[] },
+    prepared?: PreparedDispatch,
   ): AsyncGenerator<StreamChunk> {
     let iterator: AsyncIterator<StreamChunk>
     try {
       const registration = prepared?.registration ?? this.registration(options.provider)
-      const resolution = prepared === undefined
-        ? await this.resolveCallFor(registration, options, options.signal)
-        : { config: prepared.config, inputModalities: prepared.inputModalities }
-      const resolvedConfig = resolution.config
+      const adapter = registration.adapter
+      let modelInfo: LlmResolvedModelInfo
+      let resolvedConfig: LlmCallConfig
+      let dispatch: (options: GenerateOptions) => AsyncIterable<StreamChunk>
+      if (prepared === undefined) {
+        const adapterCall = await adapter.prepareCall(options.provider, options.model, options.signal)
+        modelInfo = this.normalizeModelInfo(registration, options.model, adapterCall.model)
+        resolvedConfig = this.resolveCallWithInfo(options, modelInfo).config
+        dispatch = options => adapterCall.stream(options)
+      } else {
+        modelInfo = prepared.modelInfo
+        resolvedConfig = prepared.config
+        dispatch = prepared.dispatch
+      }
       if (prepared !== undefined && !callConfigEquals(options, resolvedConfig)) {
         throw new LlmError(
           'prepared LLM call config changed before adapter dispatch',
@@ -948,11 +927,14 @@ export class LlmRuntime extends Service {
         : Object.isFrozen(options)
           ? deepFreeze({ ...options, ...resolvedConfig })
           : { ...options, ...resolvedConfig }
-      const adapter = registration.adapter
-      const stream = adapter.stream(this.forAdapter(
-        this.withoutUnsupportedImages(resolvedOptions, resolution.inputModalities),
-        adapter,
-      ))
+      const projectedOptions = modelInfo.inputModalities !== undefined
+        && !modelInfo.inputModalities.includes('image')
+        && resolvedOptions.messages.some(message => contentHasImage(message.content))
+        ? Object.isFrozen(resolvedOptions)
+          ? deepFreeze({ ...resolvedOptions, messages: projectImagesForTextModel(resolvedOptions.messages) as Message[] })
+          : { ...resolvedOptions, messages: projectImagesForTextModel(resolvedOptions.messages) as Message[] }
+        : resolvedOptions
+      const stream = dispatch(this.forAdapter(projectedOptions, adapter))
       iterator = stream[Symbol.asyncIterator]()
     } catch (error: unknown) {
       yield adapterFailureChunk(error, options.signal)
@@ -1006,7 +988,7 @@ export class LlmRuntime extends Service {
 
   private streamWithRegistration(
     options: GenerateOptions,
-    prepared?: { registration: AdapterRegistration; config: LlmCallConfig; inputModalities?: readonly ModelModality[] },
+    prepared?: PreparedDispatch,
   ): AsyncIterable<StreamChunk> {
     return this.ctx.waterfall(
       this,
@@ -1032,6 +1014,13 @@ interface AdapterRegistration {
   readonly adapter: LlmAdapter
   readonly provider: LlmProviderInfo
   readonly retryPolicy: ResolvedRetryPolicy
+}
+
+interface PreparedDispatch {
+  readonly registration: AdapterRegistration
+  readonly config: LlmCallConfig
+  readonly modelInfo: LlmResolvedModelInfo
+  readonly dispatch: (options: GenerateOptions) => AsyncIterable<StreamChunk>
 }
 
 export default LlmRuntime
