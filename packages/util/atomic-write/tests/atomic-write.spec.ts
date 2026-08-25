@@ -1,4 +1,5 @@
-import { lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { access, lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -105,4 +106,35 @@ describe('withFileLock', () => {
     })).rejects.toThrow(/ENOENT|ENOTDIR|not a directory/i)
     expect(called).toBe(false)
   })
+
+  it('recovers a lock whose recorded owner is dead instead of timing out', async () => {
+    const dir = await scratch()
+    const target = join(dir, 'document')
+    const lockPath = `${target}.lock`
+    // A child that has already exited is a provably dead owner PID.
+    const deadPid = await new Promise<number>((resolve, reject) => {
+      const child = spawn(process.execPath, ['-e', ''])
+      child.on('spawn', () => {
+        child.on('exit', () => resolve(child.pid ?? -1))
+        child.on('error', reject)
+      })
+    })
+    expect(deadPid).toBeGreaterThan(0)
+    await writeFile(lockPath, `${deadPid}\n`)
+
+    let called = false
+    await withFileLock(target, async () => { called = true })
+    expect(called).toBe(true)
+    await expect(access(lockPath)).rejects.toThrow()
+  })
+
+  it('never steals a lock whose recorded owner is still alive', async () => {
+    const dir = await scratch()
+    const target = join(dir, 'document')
+    const lockPath = `${target}.lock`
+    await writeFile(lockPath, `${process.pid}\n`)
+
+    await expect(withFileLock(target, async () => {})).rejects.toThrow(/timed out waiting for the writer lock/)
+    expect(await readFile(lockPath, 'utf8')).toBe(`${process.pid}\n`)
+  }, 10_000)
 })
