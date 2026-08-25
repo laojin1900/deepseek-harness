@@ -15,6 +15,8 @@ import type {
   LlmModelContext,
   LlmModelDiscoveryRequest,
   LlmModelInfo,
+  LlmQuotaRequest,
+  LlmQuotaResult,
   LlmResolvedModelInfo,
   LlmProviderInfo,
   ModelModality,
@@ -315,6 +317,10 @@ export class LlmRuntime extends Service {
     string,
     (request: LlmModelDiscoveryRequest) => Promise<readonly LlmDiscoveredModel[]>
   >()
+  private quotas = new Map<
+    string,
+    (request: LlmQuotaRequest) => Promise<LlmQuotaResult>
+  >()
 
   constructor(ctx: Context) {
     super(ctx, 'llm')
@@ -583,6 +589,50 @@ export class LlmRuntime extends Service {
       })
     }
     return models
+  }
+
+  /**
+   * Offer to answer quota/balance queries for the settings namespace this
+   * plugin owns. Disposed with the fiber.
+   * @param settingsNs - the namespace whose profiles this quota query serves.
+   * @param query - answers one provider's quota; must honor `request.signal`.
+   * @returns the disposer that withdraws the offer.
+   */
+  registerQuota(
+    settingsNs: string,
+    query: (request: LlmQuotaRequest) => Promise<LlmQuotaResult>,
+  ): () => void {
+    const dispose = this.ctx.effect(function* (this: LlmRuntime) {
+      if (settingsNs.length === 0) {
+        throw new LlmError('quota query needs a non-empty settings namespace', 'INVALID_QUOTA')
+      }
+      if (this.quotas.has(settingsNs)) {
+        throw new LlmError(`quota query for "${settingsNs}" is already registered`, 'DUPLICATE_QUOTA')
+      }
+      this.quotas.set(settingsNs, query)
+      yield () => {
+        this.quotas.delete(settingsNs)
+      }
+    }.bind(this), 'llm.registerQuota()')
+    return () => void dispose()
+  }
+
+  /**
+   * Ask one provider's quota/balance. The reply is already shaped for display,
+   * with an explicit reliability status (`ok` / `unavailable` / `error`).
+   * @param settingsNs - namespace whose registered query serves this provider.
+   * @param request - the provider to ask.
+   * @returns the quota result; throws when no query is registered.
+   */
+  async getQuota(settingsNs: string, request: LlmQuotaRequest): Promise<LlmQuotaResult> {
+    const query = this.quotas.get(settingsNs)
+    if (query === undefined) {
+      throw new LlmError(`no quota query is registered for "${settingsNs}"`, 'NO_QUOTA')
+    }
+    if (request.provider.length === 0) {
+      throw new LlmError('quota query needs a provider route', 'INVALID_QUOTA')
+    }
+    return query(request)
   }
 
   /**

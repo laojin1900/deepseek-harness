@@ -6,7 +6,6 @@ import LlmRuntime, {
   errorChain,
   GenerateOptions,
   HarnessError,
-  IMAGE_OMITTED_PLACEHOLDER,
   isContextWindowExceededError,
   isQuotaExceededError,
   LlmAdapter,
@@ -15,6 +14,7 @@ import LlmRuntime, {
   ReasoningEffortId,
   resolveRetryPolicy,
   StreamChunk,
+  textOnlyImageText,
   createMessage,
   createUserMessage,
 } from '@deepseek-ai/dsh-llm'
@@ -234,11 +234,11 @@ describe('LlmRuntime', () => {
     expect(adapter.lastOptions?.messages[0]?.content).toEqual([{
       type: 'tool-result',
       toolCallId: CallId('call-1'),
-      content: [{ type: 'text', text: IMAGE_OMITTED_PLACEHOLDER }, { type: 'text', text: 'tool text' }],
+      content: [{ type: 'text', text: textOnlyImageText(image.attachment) }, { type: 'text', text: 'tool text' }],
     }])
     expect(adapter.lastOptions?.messages[1]).toBe(textMessage)
     expect(adapter.lastOptions?.messages[2]?.content).toEqual([
-      { type: 'text', text: IMAGE_OMITTED_PLACEHOLDER },
+      { type: 'text', text: textOnlyImageText(image.attachment) },
       { type: 'text', text: 'compare' },
     ])
     expect(imageMessage.content[0]).toEqual(image)
@@ -256,7 +256,7 @@ describe('LlmRuntime', () => {
     const prepared = await ctx.llm.prepareCall({ provider: 'route', model: 'plain' })
     for await (const _chunk of prepared.stream({ provider: 'route', model: 'plain', messages })) { /* drain */ }
     expect(adapter.lastOptions?.messages[2]?.content).toEqual([
-      { type: 'text', text: IMAGE_OMITTED_PLACEHOLDER },
+      { type: 'text', text: textOnlyImageText(image.attachment) },
       { type: 'text', text: 'compare' },
     ])
   })
