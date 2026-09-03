@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { AttachmentId } from '@deepseek-ai/dsh-attachment'
 import LlmRuntime, {
-  CallId,
+  ToolCallId,
   errorChain,
   GenerateOptions,
   HarnessError,
@@ -211,10 +211,10 @@ describe('LlmRuntime', () => {
       role: 'user',
       content: [{
         type: 'tool-result' as const,
-        toolCallId: CallId('call-1'),
+        toolCallId: ToolCallId('call-1'),
         content: [image, { type: 'text' as const, text: 'tool text' }],
       }],
-      source: { kind: 'tool', callId: CallId('call-1') },
+      source: { kind: 'tool', callId: ToolCallId('call-1') },
     })
     const textMessage = createMessage({
       role: 'user',
@@ -233,7 +233,7 @@ describe('LlmRuntime', () => {
     for await (const _chunk of ctx.llm.stream({ provider: 'route', model: 'plain', messages })) { /* drain */ }
     expect(adapter.lastOptions?.messages[0]?.content).toEqual([{
       type: 'tool-result',
-      toolCallId: CallId('call-1'),
+      toolCallId: ToolCallId('call-1'),
       content: [{ type: 'text', text: textOnlyImageText(image.attachment) }, { type: 'text', text: 'tool text' }],
     }])
     expect(adapter.lastOptions?.messages[1]).toBe(textMessage)
@@ -244,7 +244,7 @@ describe('LlmRuntime', () => {
     expect(imageMessage.content[0]).toEqual(image)
     expect(toolMessage.content).toEqual([{
       type: 'tool-result',
-      toolCallId: CallId('call-1'),
+      toolCallId: ToolCallId('call-1'),
       content: [image, { type: 'text', text: 'tool text' }],
     }])
 
@@ -601,13 +601,20 @@ describe('LlmRuntime', () => {
     const ctx = new Context()
     await ctx.plugin(LlmRuntime)
     const provider = { id: 'catalog', name: 'Catalog Provider' }
-    const model = { provider: 'catalog', id: 'fast', name: 'Fast', description: 'Low latency' }
+    const model = {
+      provider: 'catalog',
+      id: 'fast',
+      name: 'Fast',
+      description: 'Low latency',
+      inputModalities: ['text'] as const,
+    }
     ctx.llm.registerAdapter(['catalog'], new CatalogAdapter(provider, [model]))
 
     const providers = ctx.llm.listProviders()
     const models = await ctx.llm.listModels('catalog')
     expect(providers).toEqual([provider])
     expect(models).toEqual([model])
+    expect(models[0]!.inputModalities).not.toBe(model.inputModalities)
 
     providers[0]!.name = 'mutated'
     models[0]!.name = 'mutated'
@@ -615,7 +622,7 @@ describe('LlmRuntime', () => {
     model.name = 'source mutated'
     expect(ctx.llm.listProviders()).toEqual([{ id: 'catalog', name: 'Catalog Provider' }])
     await expect(ctx.llm.listModels('catalog')).resolves.toEqual([{
-      provider: 'catalog', id: 'fast', name: 'source mutated', description: 'Low latency',
+      provider: 'catalog', id: 'fast', name: 'source mutated', description: 'Low latency', inputModalities: ['text'],
     }])
   })
 

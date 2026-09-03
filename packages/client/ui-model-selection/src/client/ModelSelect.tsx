@@ -13,20 +13,16 @@
  */
 import {
   useEffect, useId, useMemo, useRef, useState, useSyncExternalStore,
-  type FocusEvent, type KeyboardEvent, type ReactNode,
+  type KeyboardEvent, type FocusEvent,
 } from 'react'
 import clsx from 'clsx'
 import type { ModelReasoningEffort, ModelSelection } from '@deepseek-ai/dsh-api-remotes/client'
 import {
   IconCheckOutline16, IconChevronDownOutline14, IconChevronRightOutline14,
-  IconCloseOutline16, IconRefreshOutline16, IconWarningOutline16, Toast,
+  IconWarningOutline16, Toast,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ModelSelectInjected } from './slots.ts'
-import { incrementUsageCount } from './usage.ts'
-import { sortWeight, vendorOf } from './sort.ts'
-import { providerKind, type ChannelKind } from './provider-labels.ts'
-import { isModelVisible, readHiddenModels, rememberDefaultModel, toggleModelHidden } from './preferences.ts'
 import css from './ModelSelect.module.css'
 
 /** Which pane the dropdown shows: the two-row root or one drilled-in list. */
@@ -37,29 +33,7 @@ interface EffortChoice {
   key: string
   effort: string | undefined
   label: string
-  description?: string
 }
-
-/** Format token capacity for context window display (e.g. 1M / 256K). */
-function formatCapacity(tokens: number | undefined): string | null {
-  if (typeof tokens !== 'number' || tokens <= 0) return null
-  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(tokens % 1_000_000 === 0 ? 0 : 1)}M`
-  if (tokens >= 1_000) return `${Math.round(tokens / 1_000)}K`
-  return String(tokens)
-}
-
-/** A short localized label for the channel badge. */
-function channelLabel(kind: ChannelKind, t: (key: 'channel.subscription' | 'channel.api') => string): string {
-  if (kind === 'subscription') return t('channel.subscription')
-  if (kind === 'api') return t('channel.api')
-  return ''
-}
-
-/** Default maximum models shown per provider group before collapsing into "Show more". */
-const DEFAULT_VISIBLE_MODELS = 4
-
-/** Models in one expanded provider group beyond which a second-level vendor fold applies. */
-const VENDOR_FOLD_THRESHOLD = 12
 
 /**
  * Render the composer model seat.
@@ -68,7 +42,7 @@ const VENDOR_FOLD_THRESHOLD = 12
  * @returns the trigger and, while open, the two-level menu.
  */
 export function ModelSelect(
-  { locked, available, directory, load, loadQuota, select, t }:
+  { locked, available, directory, load, select, t }:
   ModelSelectInjected & { locked: boolean } & PropsLocale<'model'>,
 ) {
   const state = useSyncExternalStore(
@@ -77,29 +51,6 @@ export function ModelSelect(
   )
   const [open, setOpen] = useState(false)
   const [pane, setPane] = useState<Pane>('root')
-  const [searchQuery, setSearchQuery] = useState('')
-  const [expandedGroups, setExpandedGroups] = useState<ReadonlySet<string>>(() => new Set())
-  const [expandedVendors, setExpandedVendors] = useState<ReadonlySet<string>>(() => new Set())
-  const [hiddenModels, setHiddenModels] = useState<ReadonlySet<string>>(() => readHiddenModels())
-
-  const toggleGroupExpand = (groupId: string): void => {
-    setExpandedGroups((current) => {
-      const next = new Set(current)
-      if (next.has(groupId)) next.delete(groupId)
-      else next.add(groupId)
-      return next
-    })
-  }
-
-  const toggleVendor = (groupId: string, vendor: string): void => {
-    const key = `${groupId}:${vendor}`
-    setExpandedVendors((current) => {
-      const next = new Set(current)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
-      return next
-    })
-  }
   // The in-menu error strip serves catalog loads (its Retry re-runs the
   // load); a rejected SELECTION announces through the transient toast
   // instead, so the strip renders only while the latest failure-capable
@@ -145,57 +96,14 @@ export function ModelSelect(
         key: `effort:${effort.id}`,
         effort: effort.id,
         label: effort.name,
-        ...effort.description === undefined ? {} : { description: effort.description },
       })),
     ], [reasoning, t])
   const busy = state.status === 'selecting'
-
-  // Smart sort (three-tier): flagship vendor base weight + bounded usage
-  // frequency, tie-break with natural collation. Groups ordered by their
-  // top model. Hidden models (whitelist) are filtered; search filters live.
-  const sortedGroups = useMemo(() => {
-    const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
-    const query = searchQuery.trim().toLowerCase()
-
-    return [...state.groups]
-      .map((group) => {
-        const filteredModels = group.models.filter(m =>
-          isModelVisible(hiddenModels, group.id, m.id) &&
-          (query.length === 0 ||
-            m.id.toLowerCase().includes(query) ||
-            m.name.toLowerCase().includes(query) ||
-            (m.description !== undefined && m.description.toLowerCase().includes(query))),
-        )
-        return {
-          ...group,
-          models: [...filteredModels].sort((a, b) => {
-            const wa = sortWeight(group.id, a.id)
-            const wb = sortWeight(group.id, b.id)
-            if (wa !== wb) return wb - wa
-            return collator.compare(a.name, b.name)
-          }),
-          _topWeight: Math.max(0, ...filteredModels.map(m => sortWeight(group.id, m.id))),
-        }
-      })
-      .filter(group => group.models.length > 0)
-      .sort((a, b) => {
-        if (a._topWeight !== b._topWeight) return b._topWeight - a._topWeight
-        return collator.compare(a.name, b.name)
-      })
-  }, [state.groups, searchQuery, hiddenModels])
 
   const reload = (): void => {
     lastActionRef.current = 'load'
     load()
   }
-
-  // Mount-time load resolves the trigger label; every open refreshes.
-  useEffect(() => {
-    if (available) {
-      lastActionRef.current = 'load'
-      load()
-    }
-  }, [available, load])
 
   useEffect(() => {
     if (!open) return
@@ -206,18 +114,10 @@ export function ModelSelect(
     return () => { document.removeEventListener('mousedown', closeOutside) }
   }, [open])
 
-  // Refresh quota answers whenever the picker opens, so provider headers show
-  // fresh balances (recipe §7: one badge per provider group, not per model).
-  useEffect(() => {
-    if (!open) return
-    for (const group of state.groups) loadQuota(group.id)
-  }, [open, state.groups, loadQuota])
-
   if (!available) return null
 
   const show = (): void => {
     setPane('root')
-    setExpandedGroups(new Set())
     setOpen(true)
     reload()
   }
@@ -273,8 +173,6 @@ export function ModelSelect(
       close(true)
       return
     }
-    incrementUsageCount(selection.provider, selection.model)
-    rememberDefaultModel(selection.provider, selection.model)
     lastActionRef.current = 'select'
     void select(selection).then(settleSelection)
   }
@@ -294,13 +192,19 @@ export function ModelSelect(
     void select(selection).then(settleSelection)
   }
 
-  const modelLabel = currentChoice?.model.name ?? t('trigger.fallback')
+  const waiting = state.current === null && state.status === 'loading'
+  const modelLabel = waiting
+    ? t('trigger.loading')
+    : currentChoice?.model.name
+      ?? (state.current === null ? t('trigger.fallback') : `${state.current.provider}/${state.current.model}`)
   const triggerLabel = effortLabel === undefined ? modelLabel : `${modelLabel} · ${effortLabel}`
-  const triggerAria = currentChoice === undefined
-    ? t('trigger.selectAria')
-    : effortLabel === undefined
-      ? t('trigger.aria', { model: modelLabel })
-      : t('trigger.ariaEffort', { model: modelLabel, effort: effortLabel })
+  const triggerAria = waiting
+    ? t('trigger.loading')
+    : state.current === null
+      ? t('trigger.selectAria')
+      : effortLabel === undefined
+        ? t('trigger.aria', { model: modelLabel })
+        : t('trigger.ariaEffort', { model: modelLabel, effort: effortLabel })
   itemRefs.current = []
   let itemIndex = 0
   const itemRef = () => {
@@ -360,25 +264,6 @@ export function ModelSelect(
 
           {pane === 'model' && (
             <>
-              <div className={css.searchToolbar}>
-                <input
-                  type="search"
-                  className={css.searchInput}
-                  value={searchQuery}
-                  placeholder={t('search.placeholder')}
-                  aria-label={t('search.placeholder')}
-                  onChange={(e) => { setSearchQuery(e.target.value) }}
-                />
-                <button
-                  type="button"
-                  className={css.refreshButton}
-                  title={t('search.refresh')}
-                  aria-label={t('search.refresh')}
-                  onClick={reload}
-                >
-                  <IconRefreshOutline16 />
-                </button>
-              </div>
               {state.status === 'loading' && (
                 <div className={css.status}>{t('status.loading')}</div>
               )}
@@ -395,149 +280,34 @@ export function ModelSelect(
                 </div>
               ))}
               <div className={clsx(css.groups, 'scrollable')}>
-                {sortedGroups.map((group) => {
+                {state.groups.map((group) => {
                   const headingId = `${id}-${group.id}`
-                  const searching = searchQuery.trim().length > 0
-                  // Searching bypasses collapse: the filtered set already shrinks.
-                  const isExpanded = searching || expandedGroups.has(group.id)
-                  const hasMore = !searching && group.models.length > DEFAULT_VISIBLE_MODELS
-                  const kind = providerKind(group.id)
-                  // When collapsed, show top 4 used models + ensure selected model is visible
-                  const selectedModelInGroup = group.models.find(m => state.current?.provider === group.id && state.current.model === m.id)
-                  let displayModels = isExpanded ? group.models : group.models.slice(0, DEFAULT_VISIBLE_MODELS)
-                  if (!isExpanded && selectedModelInGroup !== undefined && !displayModels.some(m => m.id === selectedModelInGroup.id)) {
-                    displayModels = [...displayModels, selectedModelInGroup]
-                  }
-                  const remainingCount = group.models.length - displayModels.length
-
-                  // Second-level fold: an expanded gateway provider with many
-                  // models groups them by vendor, each vendor collapsed by
-                  // default so the opened list stays short.
-                  const useVendorFold = isExpanded && !searching && group.models.length > VENDOR_FOLD_THRESHOLD
-                  const vendorGroups = useVendorFold
-                    ? [...group.models.reduce((acc, m) => {
-                      const vendor = vendorOf(m.id)
-                      const bucket = acc.get(vendor) ?? []
-                      bucket.push(m)
-                      acc.set(vendor, bucket)
-                      return acc
-                    }, new Map<string, typeof group.models>()).entries()]
-                      .map(([vendor, models]) => ({
-                        vendor,
-                        models: [...models].sort((a, b) => sortWeight(group.id, b.id) - sortWeight(group.id, a.id)),
-                      }))
-                      .sort((a, b) => {
-                        const wa = Math.max(0, ...a.models.map(m => sortWeight(group.id, m.id)))
-                        const wb = Math.max(0, ...b.models.map(m => sortWeight(group.id, m.id)))
-                        return wb - wa
-                      })
-                    : null
-
-                  const renderModel = (model: (typeof displayModels)[number]): ReactNode => {
-                    const selected = state.current?.provider === group.id && state.current.model === model.id
-                    return (
-                      <button
-                        ref={itemRef()}
-                        type="button"
-                        role="menuitemradio"
-                        aria-checked={selected}
-                        className={clsx(css.option, selected && css.selected)}
-                        key={model.id}
-                        title={model.name}
-                        disabled={busy}
-                        onClick={() => { choose({ provider: group.id, model: model.id }) }}
-                      >
-                        <span className={css.optionCopy}>
-                          <span className={css.modelName}>{model.name}</span>
-                          {model.description !== undefined && (
-                            <span className={css.description}>{model.description}</span>
-                          )}
-                        </span>
-                        {(() => {
-                          const cap = formatCapacity((model as { contextWindow?: number }).contextWindow)
-                          return cap !== null ? <span className={css.capacityBadge}>{cap}</span> : null
-                        })()}
-                        <span className={css.check}>
-                          {selected ? <IconCheckOutline16 /> : null}
-                        </span>
-                        <span
-                          role="button"
-                          tabIndex={0}
-                          className={css.hideButton}
-                          title={t('model.hide')}
-                          aria-label={t('model.hide')}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            setHiddenModels(toggleModelHidden(group.id, model.id))
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' || e.key === ' ') {
-                              e.preventDefault()
-                              e.stopPropagation()
-                              setHiddenModels(toggleModelHidden(group.id, model.id))
-                            }
-                          }}
-                        >
-                          <IconCloseOutline16 size={14} />
-                        </span>
-                      </button>
-                    )
-                  }
-
                   return (
                     <section role="group" aria-labelledby={headingId} className={css.group} key={group.id}>
-                      <div className={css.groupTitle} id={headingId}>
-                        {group.name}
-                        {kind !== 'neutral'
-                          ? <span className={css.channelBadge} data-channel={kind}>{channelLabel(kind, t)}</span>
-                          : null}
-                        {(() => {
-                          const quota = state.quotas[group.id]
-                          if (quota === undefined) {
-                            return <span className={css.quotaBadge} data-tone="loading" aria-label={t('quota.loading')} />
-                          }
-                          return (
-                            <span className={css.quotaBadge} data-tone={quota.status} title={quota.detail}>
-                              {quota.text}
+                      <div className={css.groupTitle} id={headingId}>{group.name}</div>
+                      {group.models.map((model) => {
+                        const selected = state.current?.provider === group.id && state.current.model === model.id
+                        return (
+                          <button
+                            ref={itemRef()}
+                            type="button"
+                            role="menuitemradio"
+                            aria-checked={selected}
+                            className={clsx(css.option, selected && css.selected)}
+                            key={model.id}
+                            title={model.name}
+                            disabled={busy}
+                            onClick={() => { choose({ provider: group.id, model: model.id }) }}
+                          >
+                            <span className={css.optionCopy}>
+                              <span className={css.modelName}>{model.name}</span>
                             </span>
-                          )
-                        })()}
-                        {!searching && hasMore && !expandedGroups.has(group.id)
-                          ? <span className={css.groupCountHint}>{t('group.firstOf', { count: DEFAULT_VISIBLE_MODELS, total: group.models.length })}</span>
-                          : null}
-                      </div>
-                      {vendorGroups !== null
-                        ? vendorGroups.map(({ vendor, models }) => {
-                          const vendorKey = `${group.id}:${vendor}`
-                          const vendorExpanded = expandedVendors.has(vendorKey)
-                          return (
-                            <div className={css.vendorGroup} key={vendor}>
-                              <button
-                                type="button"
-                                className={css.vendorToggle}
-                                aria-expanded={vendorExpanded}
-                                onClick={() => { toggleVendor(group.id, vendor) }}
-                              >
-                                <span className={css.vendorChevron} aria-hidden="true">{vendorExpanded ? '▾' : '▸'}</span>
-                                <span className={css.vendorName}>{vendor}</span>
-                                <span className={css.vendorCount}>{models.length}</span>
-                              </button>
-                              {vendorExpanded ? models.map(renderModel) : null}
-                            </div>
-                          )
-                        })
-                        : displayModels.map(renderModel)}
-                      {hasMore && (
-                        <button
-                          type="button"
-                          className={css.expandToggle}
-                          onClick={() => { toggleGroupExpand(group.id) }}
-                        >
-                          {expandedGroups.has(group.id)
-                            ? t('group.collapse')
-                            : t('group.expand', { count: remainingCount })}
-                        </button>
-                      )}
+                            <span className={css.check}>
+                              {selected ? <IconCheckOutline16 /> : null}
+                            </span>
+                          </button>
+                        )
+                      })}
                     </section>
                   )
                 })}
@@ -571,9 +341,6 @@ export function ModelSelect(
                   >
                     <span className={css.optionCopy}>
                       <span className={css.modelName}>{level.label}</span>
-                      {level.description !== undefined && (
-                        <span className={css.description}>{level.description}</span>
-                      )}
                     </span>
                     <span className={css.check}>
                       {effectiveEffort === level.effort ? <IconCheckOutline16 /> : null}
