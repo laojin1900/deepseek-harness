@@ -19,10 +19,14 @@ import clsx from 'clsx'
 import type { ModelReasoningEffort, ModelSelection } from '@deepseek-ai/dsh-api-remotes/client'
 import {
   IconCheckOutline16, IconChevronDownOutline14, IconChevronRightOutline14,
-  IconWarningOutline16, Toast,
+  IconCloseOutline16, IconWarningOutline16, Toast,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ModelSelectInjected } from './slots.ts'
+import { sortWeight } from './sort.ts'
+import { incrementUsageCount } from './usage.ts'
+import { providerKind, type ChannelKind } from './provider-labels.ts'
+import { isModelVisible, readHiddenModels, toggleModelHidden } from './preferences.ts'
 import css from './ModelSelect.module.css'
 
 /** Which pane the dropdown shows: the two-row root or one drilled-in list. */
@@ -35,6 +39,13 @@ interface EffortChoice {
   label: string
 }
 
+/** A short localized label for the channel badge. */
+function channelLabel(kind: ChannelKind, t: (key: 'channel.subscription' | 'channel.api') => string): string {
+  if (kind === 'subscription') return t('channel.subscription')
+  if (kind === 'api') return t('channel.api')
+  return ''
+}
+
 /**
  * Render the composer model seat.
  * @param props - owner share (locked) + injected face (shared directory
@@ -42,7 +53,7 @@ interface EffortChoice {
  * @returns the trigger and, while open, the two-level menu.
  */
 export function ModelSelect(
-  { locked, available, directory, load, select, t }:
+  { locked, available, directory, load, loadQuota, select, t }:
   ModelSelectInjected & { locked: boolean } & PropsLocale<'model'>,
 ) {
   const state = useSyncExternalStore(
@@ -63,7 +74,34 @@ export function ModelSelect(
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([])
   const id = useId()
 
-  const choices = useMemo(() => state.groups.flatMap(group =>
+  const [hiddenModels, setHiddenModels] = useState<ReadonlySet<string>>(() => readHiddenModels())
+
+  // Smart sort (three-tier): flagship vendor base weight + bounded usage
+  // frequency, tie-broken with natural collation. Hidden models are filtered
+  // out, and groups order by their top model.
+  const sortedGroups = useMemo(() => {
+    const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
+    return [...state.groups]
+      .map(group => ({
+        ...group,
+        models: group.models
+          .filter(model => isModelVisible(hiddenModels, group.id, model.id))
+          .sort((a, b) => {
+            const wa = sortWeight(group.id, a.id)
+            const wb = sortWeight(group.id, b.id)
+            if (wa !== wb) return wb - wa
+            return collator.compare(a.name, b.name)
+          }),
+      }))
+      .sort((a, b) => {
+        const wa = Math.max(0, ...a.models.map(model => sortWeight(a.id, model.id)))
+        const wb = Math.max(0, ...b.models.map(model => sortWeight(b.id, model.id)))
+        if (wa !== wb) return wb - wa
+        return collator.compare(a.name, b.name)
+      })
+  }, [state.groups, hiddenModels])
+
+  const choices = useMemo(() => sortedGroups.flatMap(group =>
     group.models.map(model => ({
       group,
       model,
@@ -74,7 +112,7 @@ export function ModelSelect(
           ? {}
           : { reasoningEffort: model.reasoning.defaultEffort },
       } satisfies ModelSelection,
-    }))), [state.groups])
+    }))), [sortedGroups])
   const selectedIndex = state.current === null
     ? -1
     : choices.findIndex(c => c.selection.provider === state.current?.provider && c.selection.model === state.current.model)
@@ -113,6 +151,13 @@ export function ModelSelect(
     document.addEventListener('mousedown', closeOutside)
     return () => { document.removeEventListener('mousedown', closeOutside) }
   }, [open])
+
+  // Refresh quota answers whenever the picker opens, so provider headers show
+  // fresh balances (recipe §7: one badge per provider group, not per model).
+  useEffect(() => {
+    if (!open) return
+    for (const group of state.groups) loadQuota(group.id)
+  }, [open, state.groups, loadQuota])
 
   if (!available) return null
 
@@ -173,6 +218,7 @@ export function ModelSelect(
       close(true)
       return
     }
+    incrementUsageCount(selection.provider, selection.model)
     lastActionRef.current = 'select'
     void select(selection).then(settleSelection)
   }
@@ -280,11 +326,30 @@ export function ModelSelect(
                 </div>
               ))}
               <div className={clsx(css.groups, 'scrollable')}>
-                {state.groups.map((group) => {
+                {sortedGroups.map((group) => {
                   const headingId = `${id}-${group.id}`
                   return (
                     <section role="group" aria-labelledby={headingId} className={css.group} key={group.id}>
-                      <div className={css.groupTitle} id={headingId}>{group.name}</div>
+                      <div className={css.groupTitle} id={headingId}>
+                        {group.name}
+                        {(() => {
+                          const kind = providerKind(group.id)
+                          return kind !== 'neutral'
+                            ? <span className={css.channelBadge} data-channel={kind}>{channelLabel(kind, t)}</span>
+                            : null
+                        })()}
+                        {(() => {
+                          const quota = state.quotas[group.id]
+                          if (quota === undefined) {
+                            return <span className={css.quotaBadge} data-tone="loading" aria-label={t('quota.loading')} />
+                          }
+                          return (
+                            <span className={css.quotaBadge} data-tone={quota.status} title={quota.detail}>
+                              {quota.text}
+                            </span>
+                          )
+                        })()}
+                      </div>
                       {group.models.map((model) => {
                         const selected = state.current?.provider === group.id && state.current.model === model.id
                         return (
@@ -304,6 +369,26 @@ export function ModelSelect(
                             </span>
                             <span className={css.check}>
                               {selected ? <IconCheckOutline16 /> : null}
+                            </span>
+                            <span
+                              role="button"
+                              tabIndex={0}
+                              className={css.hideButton}
+                              title={t('model.hide')}
+                              aria-label={t('model.hide')}
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                setHiddenModels(toggleModelHidden(group.id, model.id))
+                              }}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter' || event.key === ' ') {
+                                  event.preventDefault()
+                                  event.stopPropagation()
+                                  setHiddenModels(toggleModelHidden(group.id, model.id))
+                                }
+                              }}
+                            >
+                              <IconCloseOutline16 size={14} />
                             </span>
                           </button>
                         )

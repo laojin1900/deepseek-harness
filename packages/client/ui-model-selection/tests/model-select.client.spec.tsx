@@ -158,6 +158,7 @@ describe('ModelSelect reasoning effort', () => {
       available
       directory={directory}
       load={vi.fn()}
+      loadQuota={vi.fn()}
       select={vi.fn().mockResolvedValue(true)}
       t={t}
     />)

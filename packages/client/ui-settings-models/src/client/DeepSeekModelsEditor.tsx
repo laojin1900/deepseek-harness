@@ -7,10 +7,10 @@
 
 import { useState } from 'react'
 import type { ReactNode } from 'react'
-import type { IApiClient } from '@deepseek-ai/dsh-api-remotes/client'
 import {
   IconChevronDownOutline14, IconChevronRightOutline14, IconPlusOutline16, IconTrashOutline16,
 } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { ModelsOperations } from './operations.ts'
 import type { en } from './locales.ts'
 import styles from './ModelsSection.module.css'
 
@@ -20,7 +20,11 @@ export type DeepSeekModelDraft = Record<string, unknown>
 /** Discovery probe target: the namespace and endpoint facts the fetch carries. */
 export interface DeepSeekProbeTarget {
   settingsNs: string
+  /** Route being edited, when the card edits one. */
+  provider?: string
   baseURL?: string
+  /** Wire protocol the form names, when it names one. */
+  api?: string
   apiKey?: string
 }
 
@@ -150,8 +154,8 @@ export interface DeepSeekModelsEditorProps {
   onReset: () => void
   /** Discovery probe target for the fetch action; absent hides the button. */
   probe?: DeepSeekProbeTarget
-  /** Wire face for the discover-models RPC; absent hides the fetch button. */
-  api?: Pick<IApiClient, 'llm'>
+  /** The Host operations whose interrogation answers the fetch action. */
+  operations: ModelsOperations
 }
 
 /**
@@ -277,20 +281,21 @@ export function DeepSeekModelsEditor(props: DeepSeekModelsEditorProps): ReactNod
   )
 
   const fetchModels = async (): Promise<void> => {
-    if (props.api === undefined || props.probe === undefined) return
+    if (props.probe === undefined) return
     setFetching(true)
     setFetchError(undefined)
     try {
-      const response = await props.api.llm.discoverModels({
-        settingsNs: props.probe.settingsNs,
+      const answer = await props.operations.discoverModels(props.probe.settingsNs, {
+        ...props.probe.provider === undefined ? {} : { provider: props.probe.provider },
         ...props.probe.baseURL === undefined || props.probe.baseURL.length === 0 ? {} : { baseURL: props.probe.baseURL },
+        ...props.probe.api === undefined ? {} : { api: props.probe.api },
         ...props.probe.apiKey === undefined ? {} : { apiKey: props.probe.apiKey },
       })
-      if (!response.result.ok) {
-        setFetchError(response.result.error.message)
+      if (answer.kind === 'refused') {
+        setFetchError(answer.message)
         return
       }
-      const found = response.result.value.models
+      const found = answer.models
       if (found.length === 0) {
         setFetchError(props.t('fetchEmpty'))
         return
@@ -343,7 +348,7 @@ export function DeepSeekModelsEditor(props: DeepSeekModelsEditorProps): ReactNod
             </button>
           )
           : null}
-        {props.api !== undefined && props.probe !== undefined
+        {props.probe !== undefined
           ? (
             <button
               type="button"

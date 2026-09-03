@@ -618,6 +618,33 @@ export class LlmRuntime extends TypertRemoteService {
   }
 
   /**
+   * Remote adapter for one provider quota/balance query. The Host resolves the
+   * owning settings namespace from its configurable-provider directory, so the
+   * wire carries only the route the badge asks about.
+   * @param provider - provider route to ask.
+   * @param signal - caller cancellation supplied by the Remote carrier.
+   * @returns the quota answer already shaped for display.
+   * @throws RemoteError with `llm/quota-rejected` when the provider is unknown or the query fails.
+   */
+  @Remote('getQuota')
+  async remoteGetQuota(provider: string, signal: AbortSignal): Promise<LlmQuotaResult> {
+    const entry = this.directory.get(provider)
+    if (entry === undefined) {
+      throw new RemoteError('llm/quota-rejected', `no configurable provider named "${provider}"`, { provider })
+    }
+    try {
+      return await this.getQuota(entry.settingsNs, { provider, signal })
+    } catch (error: unknown) {
+      throw new RemoteError(
+        'llm/quota-rejected',
+        error instanceof Error ? error.message : String(error),
+        { provider },
+        { cause: error },
+      )
+    }
+  }
+
+  /**
    * Interrogate one provider endpoint for the models it advertises. The
    * request describes a draft, not a stored route, so nothing here reads or
    * writes settings or credentials — the caller owns both, and the reply is

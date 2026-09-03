@@ -16,6 +16,7 @@ import z from '@deepseek-ai/schemastery'
 import { assertUsableApiKey, LlmError, resolveImageAttachmentAccess, resolveRetryPolicy, RetryPolicySchema } from '@deepseek-ai/dsh-llm'
 import type { ModelModality, RetryPolicyConfig } from '@deepseek-ai/dsh-llm'
 import { queryBalance } from './quota.ts'
+import { discoverModels } from './discovery.ts'
 import type {} from '@deepseek-ai/dsh-fs'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { launchEnvironmentOf, type LaunchEnvironmentSnapshot } from '@deepseek-ai/dsh-launch-environment'
@@ -483,6 +484,28 @@ export function apply(ctx: Context, config: Config): void {
     }
     return queryBalance(connection.baseURL, apiKey, request.signal)
   })
+  // Model discovery: answer the Models page "fetch available models" action by
+  // interrogating the endpoint's OpenAI-compatible `GET /models` listing. A
+  // missing key is not a failure here — the endpoint is probed unauthenticated.
+  ctx.llm.registerModelDiscovery(NS, (request, signal) => discoverModels(
+    { ...request, ...signal === undefined ? {} : { signal } },
+    () => {
+      const connection = options()
+      return {
+        resolvedBaseURL: connection.baseURL,
+        defaultContextWindow: connection.defaultContextWindow,
+        defaultMaxTokens: connection.maxTokens,
+        knownModels: connection.models,
+        resolveApiKey: async () => {
+          try {
+            return await resolveApiKey(connection)
+          } catch {
+            return undefined
+          }
+        },
+      }
+    },
+  ))
   // Route effects bind to this apply fiber via the stable `ctx` reference,
   // even when a swap runs inside the scoped settings callback below.
   const registration = ctx.llm.registerAdapter([PROVIDER], adapter)

@@ -917,6 +917,7 @@ describe('ModelsSection', () => {
       disabled={true}
       onChange={vi.fn()}
       onReset={vi.fn()}
+      operations={operationsWith(scriptedFace().face)}
     />)
     expect(screen.getByLabelText<HTMLInputElement>(`${en.modelId} 1`).value).toBe('')
     expandRow(1)

@@ -510,7 +510,7 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
                     : undefined}
                   defaultMaxTokens={typeof defaultMaxTokens === 'number' ? defaultMaxTokens : undefined}
                   probe={probe}
-                  api={api}
+                  operations={operations}
                 />
               )
               : (

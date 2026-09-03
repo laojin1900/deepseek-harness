@@ -76,6 +76,7 @@ export class ModelDirectoryResolver extends Service {
     if (binding === undefined) throw new Error(`ui-model-selection: session "${String(sessionId)}" resolved no binding`)
     const directory = new ModelDirectory(
       this.ctx.remote.session,
+      this.ctx.remote.llm,
       sessionId,
       () => sessions.subagentAddress(sessionId) === undefined,
       this.catalog,

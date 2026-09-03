@@ -262,6 +262,10 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
       readonly settingsNs: string
       readonly baseURL?: string
     }
+    /** A provider quota/balance query named an unknown route or failed. */
+    'llm/quota-rejected': {
+      readonly provider: string
+    }
   }
 }
 
