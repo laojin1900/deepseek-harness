@@ -62,7 +62,13 @@ function EntryCard({ entry, zh, t }: {
       </button>
       {open ? (
         <div className={css.detail}>
-          <MarkdownText text={detail} />
+          <MarkdownText
+            text={detail}
+            labels={{
+              code: { copyLabel: t('copy'), copiedLabel: t('copied') },
+              footnotes: t('footnotes'),
+            }}
+          />
         </div>
       ) : null}
     </li>

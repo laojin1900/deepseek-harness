@@ -70,6 +70,7 @@ import type { ResolvedPiAiProviderProfile } from './config.ts'
 import { discoverModels } from './discovery.ts'
 import type { StoredModelDiscoveryProfile } from './discovery.ts'
 import { registerPiAiFlows } from './login.ts'
+import { isQuotableProvider, queryOpenRouterBalance } from './quota.ts'
 
 export { PiAiAdapter } from './adapter.ts'
 export type { PiAiAdapterOptions } from './adapter.ts'
@@ -262,6 +263,26 @@ export function apply(ctx: Context, config: Config): void {
     { ...request, ...signal === undefined ? {} : { signal } },
     () => storedDiscoveryProfile(request.provider),
   ))
+  // Quota: answer the provider header balance badge when the provider is quotable.
+  ctx.llm.registerQuota(NS, async (request) => {
+    if (!isQuotableProvider(request.provider)) {
+      return { status: 'unavailable', text: '余量不可查' }
+    }
+    const discovery = storedDiscoveryProfile(request.provider)
+    if (discovery === undefined) {
+      return { status: 'unavailable', text: '余量不可查' }
+    }
+    let apiKey: string | undefined
+    try {
+      apiKey = await discovery.resolveApiKey()
+    } catch {
+      return { status: 'unavailable', text: '余量不可查' }
+    }
+    if (apiKey === undefined) {
+      return { status: 'unavailable', text: '余量不可查' }
+    }
+    return queryOpenRouterBalance(apiKey, request.signal)
+  })
   // Route effects bind to this apply fiber via the stable `ctx` reference,
   // even when a swap runs inside the scoped settings callback below. A bare
   // mount (zero routes) is the dormant posture: nothing registers until a

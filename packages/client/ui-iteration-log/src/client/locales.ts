@@ -22,6 +22,9 @@ export const zh = {
   empty: '暂无迭代记录。',
   emptySearch: '没有匹配的迭代记录。',
   count: '{count} 条记录',
+  copy: '复制',
+  copied: '已复制',
+  footnotes: '脚注',
 } satisfies Record<string, string>
 
 /** Iteration-log locale key union. */
@@ -49,4 +52,7 @@ export const en = {
   empty: 'No iteration entries yet.',
   emptySearch: 'No matching iteration entries.',
   count: '{count} entries',
+  copy: 'Copy',
+  copied: 'Copied',
+  footnotes: 'Footnotes',
 } satisfies Record<IterationLogLocaleKey, string>

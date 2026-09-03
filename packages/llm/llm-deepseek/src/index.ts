@@ -15,6 +15,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { assertUsableApiKey, LlmError, resolveImageAttachmentAccess, resolveRetryPolicy, RetryPolicySchema } from '@deepseek-ai/dsh-llm'
 import type { ModelModality, RetryPolicyConfig } from '@deepseek-ai/dsh-llm'
+import { queryBalance } from './quota.ts'
 import type {} from '@deepseek-ai/dsh-fs'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { launchEnvironmentOf, type LaunchEnvironmentSnapshot } from '@deepseek-ai/dsh-launch-environment'
@@ -471,6 +472,17 @@ export function apply(ctx: Context, config: Config): void {
   ctx.llm.registerConfigurableProviders([
     { provider: PROVIDER, displayName: 'DeepSeek', settingsNs: NS, settingsPath: [] },
   ])
+  // Quota: answer the provider header balance badge from /user/balance.
+  ctx.llm.registerQuota(NS, async (request) => {
+    const connection = options()
+    let apiKey: string
+    try {
+      apiKey = await resolveApiKey(connection)
+    } catch {
+      return { status: 'unavailable', text: '余量不可查' }
+    }
+    return queryBalance(connection.baseURL, apiKey, request.signal)
+  })
   // Route effects bind to this apply fiber via the stable `ctx` reference,
   // even when a swap runs inside the scoped settings callback below.
   const registration = ctx.llm.registerAdapter([PROVIDER], adapter)
