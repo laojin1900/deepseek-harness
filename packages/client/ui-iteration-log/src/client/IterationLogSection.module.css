@@ -27,6 +27,7 @@
   appearance: none;
   border: 1px solid var(--dsh-border, #d8d8d8);
   border-radius: 999px;
+  corner-shape: round;
   background: transparent;
   color: var(--dsh-text, #222);
   padding: 3px 12px;
@@ -98,6 +99,7 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
+  corner-shape: round;
   background: var(--dsh-accent, #3b6ef5);
   box-shadow: 0 0 0 2px var(--dsh-bg, #fff);
 }

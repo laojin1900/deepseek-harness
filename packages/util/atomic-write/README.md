@@ -1,8 +1,22 @@
+---
+description: "Zero-dependency atomic file replacement and cross-process writer locking for file-backed stores that must never leave partial, symlink-hijacked, or wider-than-intended content on disk."
+kind: "package-library"
+---
+
 # dsh-atomic-write
 
 English | [中文](README.zh.md)
 
+## Summary
+
 Zero-dependency atomic file replacement shared by file-backed stores that must never leave partial, symlink-hijacked, or wider-than-intended content on disk — the user-settings document (`dsh-settings-file`) and the credentials store (`dsh-credentials-local`).
+
+## Table of Contents
+
+- [Surface](#surface)
+- [Model Experience](#model-experience)
+- [Known Limitations and Deferred Work](#known-limitations-and-deferred-work)
+- [Dev Note](#dev-note)
 
 ## Surface
 
@@ -45,3 +59,7 @@ None; nothing here enters a request prefix.
 - **Atomic, not durable** — no `fsync` of the file or its directory, so after a crash the rename may be observed unwound. The file-backed stores here re-read and republish on boot, keeping durability the caller's policy.
 - **String content only** — no `Buffer` or stream form until a consumer needs one.
 - **A live writer's lock blocks until timeout** — only a lock whose recorded owner PID is provably dead is recovered automatically. A paused or hung writer that stays alive (or a lock whose owner is unidentifiable) still forces a write timeout, and the operator must resolve it after confirming no writer still owns it. File age alone is never treated as evidence of abandonment.
+
+## Dev Note
+
+The implementation is intentionally tiny and lives in `src/index.ts`; the surface contract above is the whole package, so nothing here adds prose that could drift from the code.

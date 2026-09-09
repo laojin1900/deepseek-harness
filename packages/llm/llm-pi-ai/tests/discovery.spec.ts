@@ -1,9 +1,11 @@
+import { readFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import type { IncomingMessage, Server, ServerResponse } from 'node:http'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import LlmRuntime, { userAgent } from '@deepseek-ai/dsh-llm'
 import * as LlmPiAi from '@deepseek-ai/dsh-llm-pi-ai'
+import { getBuiltinModels } from '@earendil-works/pi-ai/providers/all'
 import { discoverModels } from '../src/discovery.ts'
 
 const servers: Server[] = []
@@ -72,27 +74,18 @@ async function harness(): Promise<Context> {
 }
 
 describe('catalog-route model discovery', () => {
-  it('interrogates a catalog route that names a baseURL, merging known capacities', async () => {
-    // A route naming its own endpoint is interrogated live: the configured
-    // endpoint is the truth, and installed entries go stale between releases.
-    const server = await listingServer({
-      body: JSON.stringify({ data: [{ id: 'deepseek-v4-flash' }, { id: 'from-the-endpoint' }] }),
-    })
+  it('answers from the installed registry, with capacities and no network call', async () => {
+    const server = await listingServer({ body: JSON.stringify({ data: [{ id: 'from-the-endpoint' }] }) })
     const ctx = await harness()
 
     const models = await ctx.llm.discoverModels('llm-pi-ai', { provider: 'deepseek', baseURL: server.url })
 
+    // pi-ai's own registry is the authority for its own providers, and it
+    // carries what a listing endpoint would not disclose.
     expect(models.map(model => model.id).sort())
-      .toEqual(['deepseek-v4-flash', 'from-the-endpoint'])
-    expect(server.paths).toEqual(['/models'])
-    // A known id keeps its installed capacities even though the listing
-    // discloses none.
-    const flash = models.find(model => model.id === 'deepseek-v4-flash')
-    expect(flash?.contextWindow).toBeGreaterThan(0)
-    expect(flash?.maxTokens).toBeGreaterThan(0)
-    // An unknown id keeps the listing's own (absent) fields.
-    const unknown = models.find(model => model.id === 'from-the-endpoint')
-    expect(unknown?.contextWindow).toBeUndefined()
+      .toEqual(getBuiltinModels('deepseek').map(model => model.id).sort())
+    expect(models.every(model => (model.contextWindow ?? 0) > 0 && (model.maxTokens ?? 0) > 0)).toBe(true)
+    expect(server.paths).toEqual([])
   })
 
   it('needs no endpoint for a route the catalog describes', async () => {
@@ -119,6 +112,9 @@ describe('draft-provider model discovery', () => {
       body: JSON.stringify({
         data: [
           { id: 'acme-large', display_name: 'Acme Large', context_length: 65_536, max_output_tokens: 4096 },
+          { id: 'acme-camel', displayName: 'Acme Camel', contextWindow: 131_072, maxOutputTokens: 8192 },
+          { id: 'acme-mixed', name: 'Acme Mixed', context_window: 32_768, maxTokens: 2048 },
+          { id: 'acme-legacy', max_tokens: 1024 },
           { id: 'acme-small' },
         ],
       }),
@@ -129,11 +125,104 @@ describe('draft-provider model discovery', () => {
 
     expect(models).toEqual([
       { id: 'acme-large', name: 'Acme Large', contextWindow: 65_536, maxTokens: 4096 },
-      { id: 'acme-small' },
+      { id: 'acme-camel', name: 'Acme Camel', contextWindow: 131_072, maxTokens: 8192 },
+      { id: 'acme-mixed', name: 'Acme Mixed', contextWindow: 32_768, maxTokens: 2048 },
+      { id: 'acme-legacy', name: 'acme-legacy', maxTokens: 1024 },
+      { id: 'acme-small', name: 'acme-small' },
     ])
     expect(server.paths).toEqual(['/v1/models'])
     expect(server.headers[0]?.authorization).toBe('Bearer probe-key')
     expect(server.headers[0]?.['user-agent']).toBe(userAgent())
+  })
+
+  it('reads an enriched models map using route ids and nested capacities', async () => {
+    const server = await listingServer({
+      body: JSON.stringify({
+        models: {
+          'lobechat-deepseek-chat': {
+            id: 'deepseek/deepseek-v4-flash',
+            name: 'DeepSeek V4 Flash',
+            limit: { context: 1_048_576, output: 384_000 },
+          },
+          'bare-route': {},
+          '': { id: 'nested-id', display_name: 'Nested fallback' },
+          'malformed-route': null,
+          'primitive-route': 'not a model record',
+        },
+      }),
+    })
+    const ctx = await harness()
+
+    expect(await ctx.llm.discoverModels('llm-pi-ai', { baseURL: server.url })).toEqual([
+      {
+        id: 'lobechat-deepseek-chat',
+        name: 'DeepSeek V4 Flash',
+        contextWindow: 1_048_576,
+        maxTokens: 384_000,
+      },
+      { id: 'bare-route', name: 'bare-route' },
+      { id: 'nested-id', name: 'Nested fallback' },
+    ])
+  })
+
+  it('uses Anthropic model-listing paths, headers, and capacity fields', async () => {
+    const server = await listingServer({
+      body: JSON.stringify({
+        data: [
+          {
+            id: 'claude-sonnet',
+            display_name: 'Claude Sonnet',
+            max_input_tokens: 200_000,
+            max_tokens: 64_000,
+          },
+        ],
+      }),
+    })
+    const ctx = await harness()
+
+    const rootModels = await ctx.llm.discoverModels('llm-pi-ai', {
+      baseURL: server.url,
+      api: 'anthropic-messages',
+      apiKey: 'anthropic-key',
+    })
+    const versionedModels = await ctx.llm.discoverModels('llm-pi-ai', {
+      baseURL: `${server.url}/v1`,
+      api: 'anthropic-messages',
+      apiKey: 'anthropic-key',
+    })
+    await ctx.llm.discoverModels('llm-pi-ai', {
+      baseURL: server.url,
+      api: 'anthropic-messages',
+    })
+
+    expect(rootModels).toEqual([
+      { id: 'claude-sonnet', name: 'Claude Sonnet', contextWindow: 200_000, maxTokens: 64_000 },
+    ])
+    expect(versionedModels).toEqual(rootModels)
+    expect(server.paths).toEqual([
+      '/v1/models?limit=1000',
+      '/v1/models?limit=1000',
+      '/v1/models?limit=1000',
+    ])
+    expect(server.headers.map(headers => headers['x-api-key']))
+      .toEqual(['anthropic-key', 'anthropic-key', undefined])
+    expect(server.headers.map(headers => headers['anthropic-version']))
+      .toEqual(['2023-06-01', '2023-06-01', '2023-06-01'])
+    expect(server.headers.map(headers => headers.authorization)).toEqual([undefined, undefined, undefined])
+    expect(server.headers.map(headers => headers['user-agent'])).toEqual([userAgent(), userAgent(), userAgent()])
+  })
+
+  it('prefers the standard data array when both supported formats are present', async () => {
+    const server = await listingServer({
+      body: JSON.stringify({
+        data: [{ id: 'standard' }],
+        models: { enriched: { name: 'Enriched' } },
+      }),
+    })
+    const ctx = await harness()
+
+    await expect(ctx.llm.discoverModels('llm-pi-ai', { baseURL: server.url }))
+      .resolves.toEqual([{ id: 'standard', name: 'standard' }])
   })
 
   it('keeps a deployment path instead of resolving it away', async () => {
@@ -228,7 +317,7 @@ describe('draft-provider model discovery', () => {
     const ctx = await harness()
 
     expect(await ctx.llm.discoverModels('llm-pi-ai', { baseURL: server.url }))
-      .toEqual([{ id: 'good' }, { id: 'zero-capacity' }])
+      .toEqual([{ id: 'good', name: 'good' }, { id: 'zero-capacity', name: 'zero-capacity' }])
   })
 
   it('points at the credential for a rejected one, and only then', async () => {
@@ -252,7 +341,7 @@ describe('draft-provider model discovery', () => {
     const ctx = await harness()
 
     await expect(ctx.llm.discoverModels('llm-pi-ai', { baseURL: server.url }))
-      .rejects.toThrow(/no "data" array; enter this provider's models by hand/)
+      .rejects.toThrow(/neither a "data" array nor a "models" object/)
 
     const broken = await listingServer({ body: 'not json at all' })
     await expect(ctx.llm.discoverModels('llm-pi-ai', { baseURL: broken.url }))
@@ -282,93 +371,17 @@ describe('draft-provider model discovery', () => {
       .rejects.toMatchObject({ code: 'DISCOVERY_FAILED' })
   })
 
-  it.each(['anthropic-messages', 'azure-openai-responses', 'openai-codex-responses', 'google-generative-ai'])(
+  it.each(['azure-openai-responses', 'openai-codex-responses', 'google-generative-ai'])(
     'says it cannot interrogate %s rather than guessing a shape',
     async (api) => {
       // Azure authenticates with an `api-key` header and an `api-version`
       // query despite its OpenAI lineage, and Codex uses OAuth; guessing at
       // either would report an auth failure as a provider with no models.
-      // A custom Google-protocol gateway is refused for the same reason —
-      // only the official Generative Language host is listed live.
       const ctx = await harness()
       await expect(ctx.llm.discoverModels('llm-pi-ai', { baseURL: 'https://gateway.example/v1', api }))
         .rejects.toMatchObject({ code: 'DISCOVERY_UNSUPPORTED' })
     },
   )
-
-  it('lists official Google from the live Generative Language catalog', async () => {
-    const urls: string[] = []
-    vi.stubGlobal('fetch', async (input: string | URL) => {
-      const url = String(input)
-      urls.push(url)
-      const token = new URL(url).searchParams.get('pageToken')
-      const page = token === 'page-2'
-        ? {
-          models: [{
-            name: 'models/gemini-3.7-flash',
-            displayName: 'Gemini 3.7 Flash',
-            inputTokenLimit: 1048576,
-            outputTokenLimit: 65536,
-            supportedGenerationMethods: ['generateContent'],
-          }],
-        }
-        : {
-          models: [
-            {
-              name: 'models/gemini-3.6-flash',
-              displayName: 'Gemini 3.6 Flash',
-              inputTokenLimit: 1048576,
-              outputTokenLimit: 65536,
-              supportedGenerationMethods: ['generateContent'],
-            },
-            {
-              name: 'models/gemini-3.1-flash-image',
-              displayName: 'Nano Banana',
-              supportedGenerationMethods: ['generateContent'],
-            },
-            {
-              name: 'models/gemini-embedding-001',
-              displayName: 'Embedding',
-              supportedGenerationMethods: ['embedContent'],
-            },
-          ],
-          nextPageToken: 'page-2',
-        }
-      return new Response(JSON.stringify(page), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      })
-    })
-    const ctx = await harness()
-
-    const models = await ctx.llm.discoverModels('llm-pi-ai', {
-      provider: 'google',
-      apiKey: 'test-google-key',
-    })
-
-    expect(urls).toHaveLength(2)
-    expect(urls[0]).toContain('generativelanguage.googleapis.com/v1beta/models')
-    expect(urls[0]).toContain('key=test-google-key')
-    expect(urls[1]).toContain('pageToken=page-2')
-    expect(models.map(model => model.id)).toEqual(['gemini-3.6-flash', 'gemini-3.7-flash'])
-    const flash = models.find(model => model.id === 'gemini-3.7-flash')
-    expect(flash).toEqual({
-      id: 'gemini-3.7-flash',
-      name: 'Gemini 3.7 Flash',
-      contextWindow: 1048576,
-      maxTokens: 65536,
-    })
-  })
-
-  it('still refuses a Google-protocol draft pointed at a different host', async () => {
-    const ctx = await harness()
-    await expect(ctx.llm.discoverModels('llm-pi-ai', {
-      provider: 'google',
-      api: 'google-generative-ai',
-      baseURL: 'https://gateway.example/v1beta',
-      apiKey: 'test-google-key',
-    })).rejects.toMatchObject({ code: 'DISCOVERY_UNSUPPORTED' })
-  })
 
   it('reports cancellation during the body read as an abort, not a raw reason', async () => {
     const ctx = await harness()
@@ -468,5 +481,63 @@ describe('probe key format', () => {
 
     const headers = new Headers(requests[0]?.headers)
     expect(headers.has('authorization')).toBe(false)
+  })
+})
+
+/**
+ * Replies recorded from live endpoints on 2026-09-02, plus the reply
+ * Anthropic's List Models reference documents. Each file keeps the reply's
+ * top-level fields and entry objects verbatim; only a recorded entry list is
+ * cut down to the named entries so the archive stays small.
+ */
+const RECORDED_LISTINGS = [
+  {
+    name: 'OpenRouter GET /api/v1/models',
+    file: 'openrouter-2026-09-02.json',
+    api: 'openai-completions',
+    models: [
+      { id: 'anthropic/claude-fable-5.1', name: 'Anthropic: Claude Fable 5.1', contextWindow: 1_000_000, maxTokens: 128_000 },
+      // The router's own aggregate route reports no completion cap.
+      { id: 'openrouter/auto-beta', name: 'Auto Router (Beta)', contextWindow: 2_000_000 },
+      { id: 'deepseek/deepseek-v4-flash', name: 'DeepSeek: DeepSeek V4 Flash 0423', contextWindow: 1_048_576, maxTokens: 384_000 },
+    ],
+  },
+  {
+    name: 'the models.dev anthropic provider object',
+    file: 'models-dev-anthropic-2026-09-02.json',
+    api: 'openai-completions',
+    models: [
+      { id: 'claude-opus-4-7', name: 'Claude Opus 4.7', contextWindow: 1_000_000, maxTokens: 128_000 },
+      { id: 'claude-fable-5-1', name: 'Claude Fable 5.1', contextWindow: 1_000_000, maxTokens: 128_000 },
+      { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5 (latest)', contextWindow: 200_000, maxTokens: 64_000 },
+    ],
+  },
+  {
+    name: 'DeepSeek GET /models',
+    file: 'deepseek-2026-09-02.json',
+    api: 'openai-completions',
+    models: [
+      { id: 'deepseek-v4-flash', name: 'deepseek-v4-flash' },
+      { id: 'deepseek-v4-pro', name: 'deepseek-v4-pro' },
+      { id: 'deepseek-v4-flash-vision-exp', name: 'deepseek-v4-flash-vision-exp' },
+    ],
+  },
+  {
+    name: "Anthropic's documented GET /v1/models example",
+    file: 'anthropic-reference-example.json',
+    api: 'anthropic-messages',
+    // The reference example fills both capacities with 0, which is not a
+    // usable capacity, so the row carries the name alone.
+    models: [{ id: 'claude-opus-5', name: 'Claude Opus 5' }],
+  },
+]
+
+describe('recorded provider listings', () => {
+  it.each(RECORDED_LISTINGS)('reads $name as recorded', async ({ file, api, models }) => {
+    const body = await readFile(new URL(`./fixtures/model-listings/${file}`, import.meta.url), 'utf8')
+    const server = await listingServer({ body })
+    const ctx = await harness()
+
+    await expect(ctx.llm.discoverModels('llm-pi-ai', { baseURL: server.url, api })).resolves.toEqual(models)
   })
 })

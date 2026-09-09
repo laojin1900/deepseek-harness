@@ -49,10 +49,40 @@
   white-space: nowrap;
 }
 
-/* Effort value beside the model name (mock's 'High': same 13/20/500, caption tone). */
+/* Effort value beside the model name (mock's 'High': same 13/20/500, caption
+   tone). Adaptive priority: the huge shrink factor makes the effort absorb
+   all deficit first — it ellipsizes away to nothing before the model name
+   loses a single pixel, and the chevron stays snug throughout. */
 .triggerEffort {
-  flex: 0 0 auto;
+  flex-shrink: 1000;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--dsw-alias-label-caption);
+}
+
+/* Stand-in for the whole text below the icon-only cut: the settings page's
+   Models glyph (IconDataOutline16), hidden while any text fits. */
+.triggerIcon {
+  display: none;
+  flex: 0 0 auto;
+}
+
+/* Icon-only floor: past continuous shrink (effort ellipsizes away first, then
+   the name), a 360px composer row leaves the 45cqw cap too little for a
+   legible name, so the text yields to the Models glyph. Same anonymous
+   container as PermissionSelect's 460px cut (InputBar .row); the full name
+   stays reachable through the trigger's title and aria-label. */
+@container (max-width: 360px) {
+  .triggerIcon {
+    display: block;
+  }
+
+  .triggerLabel,
+  .triggerEffort {
+    display: none;
+  }
 }
 
 .chevron {
@@ -65,11 +95,12 @@
   transform: rotate(180deg);
 }
 
+/* Portaled to body and placed from the trigger rect by the component (the
+   Menu primitive's portal rules), so the sidebar and the columns' overflow
+   clips cannot crop it; z matches the primitive's .portal layer. */
 .menu {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 8px);
-  z-index: 20;
+  position: fixed;
+  z-index: 1100;
   display: flex;
   flex-direction: column;
   /* Let the visible pane's rows set the card width, but keep pathological ids
@@ -291,7 +322,7 @@
   align-items: center;
   gap: 6px;
   padding: 6px 8px;
-  border-bottom: 1px solid var(--dsw-alias-border-subtle, rgba(0, 0, 0, 0.08));
+  border-bottom: 0.5px solid var(--dsw-alias-border-subtle, rgba(0, 0, 0, 0.08));
   position: sticky;
   top: 0;
   z-index: 2;
@@ -303,7 +334,7 @@
   min-width: 0;
   height: 28px;
   padding: 0 8px;
-  border: 1px solid var(--dsw-alias-border-subtle, rgba(0, 0, 0, 0.12));
+  border: 0.5px solid var(--dsw-alias-border-subtle, rgba(0, 0, 0, 0.12));
   border-radius: 6px;
   background: var(--dsw-alias-interactive-bg, transparent);
   color: var(--dsw-alias-label-primary);
@@ -323,7 +354,7 @@
   width: 28px;
   height: 28px;
   padding: 0;
-  border: 1px solid var(--dsw-alias-border-subtle, rgba(0, 0, 0, 0.12));
+  border: 0.5px solid var(--dsw-alias-border-subtle, rgba(0, 0, 0, 0.12));
   border-radius: 6px;
   background: transparent;
   color: var(--dsw-alias-label-secondary);
@@ -395,6 +426,7 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
+  corner-shape: round;
   background: currentColor;
 }
 

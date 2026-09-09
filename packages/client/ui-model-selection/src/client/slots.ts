@@ -17,7 +17,7 @@ export interface ModelSelectInjected {
   /** Ensure the shared advisory catalog is loaded (errors land on the store). */
   load: () => void
   /** Refresh one provider's quota answer into the shared store. */
-  loadQuota: (provider: string) => void
+  loadQuota?: (provider: string) => void
   /**
    * Select a complete provider/model/reasoning selection.
    * @param selection - model selection and optional adapter-owned effort.
