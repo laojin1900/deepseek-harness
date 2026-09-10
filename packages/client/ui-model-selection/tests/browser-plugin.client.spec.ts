@@ -100,8 +100,15 @@ async function bench(locale: 'zh' | 'en' = 'zh') {
       return Promise.resolve({ ok: true as const, value: { selected } })
     },
   }
-  const remote = Object.assign(new TestRemote(ctx), { session: sessionRemote })
+  const llmRemote = {
+    getQuota: (_provider: string) => Promise.resolve({
+      ok: true as const,
+      value: { status: 'ok' as const, text: '100%' },
+    }),
+  }
+  const remote = Object.assign(new TestRemote(ctx), { session: sessionRemote, llm: llmRemote })
   ctx.reflect.provide('remote.session', sessionRemote)
+  ctx.reflect.provide('remote.llm', llmRemote)
   const blocks = new Map<SessionId, { reason: string } | undefined>()
   ctx.provide('conversation', {
     blocks: {

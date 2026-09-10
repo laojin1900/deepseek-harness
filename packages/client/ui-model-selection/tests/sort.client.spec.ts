@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { baseWeight, sortWeight, vendorOf } from '../src/client/sort.ts'
+import { baseWeight, groupByVendor, sortWeight, vendorLabel, vendorOf } from '../src/client/sort.ts'
 
 describe('vendorOf', () => {
   it('extracts the vendor from a bare vendor/model id', () => {
@@ -38,5 +38,41 @@ describe('sortWeight', () => {
   it('baseWeight matches on the model id vendor prefix', () => {
     expect(baseWeight('x', 'anthropic/claude-sonnet')).toBeGreaterThanOrEqual(82)
     expect(baseWeight('x', 'minimax-m3')).toBe(72)
+  })
+})
+
+describe('groupByVendor', () => {
+  it('buckets models by vendor and orders vendors by their top-model weight', () => {
+    const models = [
+      { id: 'minimax-m3', name: 'MiniMax-M3' },
+      { id: 'glm-5.2', name: 'GLM-5.2' },
+      { id: 'deepseek-v3.2', name: 'DeepSeek-V3.2' },
+      { id: 'kimi-k2.5', name: 'Kimi-K2.5' },
+    ]
+    const groups = groupByVendor('b-ai', models)
+    expect(groups.map(group => group.vendor)).toEqual(['deepseek', 'kimi', 'glm', 'minimax'])
+  })
+
+  it('preserves per-vendor model order and returns one group for a single vendor', () => {
+    const models = [
+      { id: 'glm-5.2', name: 'GLM-5.2' },
+      { id: 'glm-5.1', name: 'GLM-5.1' },
+    ]
+    const groups = groupByVendor('x', models)
+    expect(groups).toHaveLength(1)
+    expect(groups[0]!.vendor).toBe('glm')
+    expect(groups[0]!.models.map(model => model.id)).toEqual(['glm-5.2', 'glm-5.1'])
+  })
+})
+
+describe('vendorLabel', () => {
+  it('maps known vendor tokens to display names', () => {
+    expect(vendorLabel('glm')).toBe('GLM')
+    expect(vendorLabel('minimax')).toBe('MiniMax')
+    expect(vendorLabel('xai')).toBe('xAI')
+  })
+
+  it('title-cases unknown vendors', () => {
+    expect(vendorLabel('somevendor')).toBe('Somevendor')
   })
 })

@@ -33,7 +33,7 @@ interface LiveState {
 
 /** The `ctx.modelDirectories` session model-selection service. */
 export class ModelDirectoryResolver extends Service {
-  static inject = ['sessions', 'remote', 'remote.session']
+  static inject = ['sessions', 'remote', 'remote.session', 'remote.llm']
 
   private readonly live: LiveState = { directories: new Map() }
   private readonly catalog: ModelCatalogDirectory

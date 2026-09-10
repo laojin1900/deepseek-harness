@@ -259,3 +259,67 @@ describe('ModelSelect reasoning effort', () => {
     expect(load).not.toHaveBeenCalled()
   })
 })
+
+describe('ModelSelect vendor fold', () => {
+  const multiVendor = () => [{
+    id: 'b-ai',
+    name: 'b.ai',
+    models: [
+      { id: 'minimax-m3', name: 'MiniMax-M3' },
+      { id: 'glm-5.2', name: 'GLM-5.2' },
+      { id: 'kimi-k2.5', name: 'Kimi-K2.5' },
+    ],
+  }]
+
+  function openModelPane(directory: ReturnType<typeof createSnapshotStore<ModelDirectoryState>>) {
+    render(<ModelSelect
+      locked={false}
+      available
+      directory={directory}
+      load={vi.fn()}
+      loadQuota={vi.fn()}
+      select={vi.fn().mockResolvedValue(true)}
+      t={t}
+    />)
+    fireEvent.click(screen.getByRole('button', { name: /选择模型/ }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /模型/ }))
+  }
+
+  it('folds into vendor sub-groups, collapsed except the current selection', () => {
+    const directory = createSnapshotStore<ModelDirectoryState>(state({
+      groups: multiVendor(),
+      current: { provider: 'b-ai', model: 'kimi-k2.5' },
+    }))
+    openModelPane(directory)
+
+    expect(screen.getByRole('button', { name: /展开 MiniMax/ }).getAttribute('aria-expanded')).toBe('false')
+    expect(screen.getByRole('button', { name: /展开 GLM/ }).getAttribute('aria-expanded')).toBe('false')
+    expect(screen.getByRole('button', { name: /收起 Kimi/ }).getAttribute('aria-expanded')).toBe('true')
+
+    expect(screen.queryByRole('menuitemradio', { name: 'MiniMax-M3' })).toBeNull()
+    expect(screen.queryByRole('menuitemradio', { name: 'GLM-5.2' })).toBeNull()
+    expect(screen.getByRole('menuitemradio', { name: 'Kimi-K2.5' })).toBeTruthy()
+  })
+
+  it('toggles a vendor sub-group open and shut', () => {
+    const directory = createSnapshotStore<ModelDirectoryState>(state({
+      groups: multiVendor(),
+      current: { provider: 'b-ai', model: 'kimi-k2.5' },
+    }))
+    openModelPane(directory)
+
+    fireEvent.click(screen.getByRole('button', { name: /展开 MiniMax/ }))
+    expect(screen.getByRole('menuitemradio', { name: 'MiniMax-M3' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /收起 MiniMax/ }))
+    expect(screen.queryByRole('menuitemradio', { name: 'MiniMax-M3' })).toBeNull()
+  })
+
+  it('renders a single-vendor provider flat, without a vendor header', () => {
+    const directory = createSnapshotStore<ModelDirectoryState>(state())
+    openModelPane(directory)
+
+    expect(screen.queryByRole('button', { name: /展开/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /收起/ })).toBeNull()
+    expect(screen.getByRole('menuitemradio', { name: 'DeepSeek-V4-Flash' })).toBeTruthy()
+  })
+})

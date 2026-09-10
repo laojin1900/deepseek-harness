@@ -76,3 +76,70 @@ export function vendorOf(modelId: string): string {
   const match = /^([a-zA-Z][a-zA-Z0-9]*)/.exec(lower)
   return (match?.[1] ?? lower)
 }
+
+/** One vendor sub-group inside a provider (the second-level fold). */
+export interface VendorGroup<M> {
+  /** Lowercase vendor token from {@link vendorOf}. */
+  readonly vendor: string
+  readonly models: readonly M[]
+}
+
+/**
+ * Bucket already-sorted models into vendor sub-groups, preserving per-vendor
+ * order. Vendor groups order by their top model's {@link sortWeight},
+ * tie-broken alphabetically, so flagship vendors float to the top of a large
+ * gateway provider.
+ */
+export function groupByVendor<M extends { id: string }>(
+  providerId: string,
+  models: readonly M[],
+): readonly VendorGroup<M>[] {
+  const order: string[] = []
+  const buckets = new Map<string, M[]>()
+  for (const model of models) {
+    const vendor = vendorOf(model.id)
+    const bucket = buckets.get(vendor)
+    if (bucket === undefined) {
+      buckets.set(vendor, [model])
+      order.push(vendor)
+    } else {
+      bucket.push(model)
+    }
+  }
+  const groups: VendorGroup<M>[] = []
+  for (const vendor of order) {
+    const bucket = buckets.get(vendor)
+    if (bucket !== undefined) groups.push({ vendor, models: bucket })
+  }
+  return groups.sort((a, b) => {
+    const wa = Math.max(0, ...a.models.map(model => sortWeight(providerId, model.id)))
+    const wb = Math.max(0, ...b.models.map(model => sortWeight(providerId, model.id)))
+    if (wa !== wb) return wb - wa
+    return a.vendor.localeCompare(b.vendor)
+  })
+}
+
+/** Display names for known vendor tokens; anything else falls back to title-case. */
+const VENDOR_NAMES: Readonly<Record<string, string>> = {
+  deepseek: 'DeepSeek',
+  qwen: 'Qwen',
+  claude: 'Claude',
+  anthropic: 'Anthropic',
+  openai: 'OpenAI',
+  gpt: 'GPT',
+  google: 'Google',
+  gemini: 'Gemini',
+  antigravity: 'Antigravity',
+  kimi: 'Kimi',
+  glm: 'GLM',
+  grok: 'Grok',
+  xai: 'xAI',
+  minimax: 'MiniMax',
+  ai21: 'AI21',
+  amazon: 'Amazon',
+}
+
+/** Human-readable vendor name for the fold header. */
+export function vendorLabel(vendor: string): string {
+  return VENDOR_NAMES[vendor] ?? vendor.charAt(0).toUpperCase() + vendor.slice(1)
+}

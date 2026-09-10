@@ -18,13 +18,15 @@ import {
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import type { ModelReasoningEffort, ModelSelection } from '@deepseek-ai/dsh-api-remotes/client'
+import type { ModelCatalogModel } from '@deepseek-ai/dsh-api-session-controller/types'
 import {
   IconCheckOutline16, IconChevronDownOutline14, IconChevronRightOutline14,
   IconCloseOutline16, IconDataOutline16, IconWarningOutline16, Toast,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ModelSelectInjected } from './slots.ts'
-import { sortWeight } from './sort.ts'
+import type { ModelDirectoryState } from './directory.ts'
+import { groupByVendor, sortWeight, vendorLabel, vendorOf } from './sort.ts'
 import { incrementUsageCount } from './usage.ts'
 import { providerKind, type ChannelKind } from './provider-labels.ts'
 import { isModelVisible, readHiddenModels, toggleModelHidden } from './preferences.ts'
@@ -49,6 +51,23 @@ function channelLabel(kind: ChannelKind, t: (key: 'channel.subscription' | 'chan
 
 /** Unplaced portal card: hidden but laid out at a fixed origin so offsetWidth/offsetHeight are real (Menu primitive's measure pass). */
 const MEASURE_STYLE: CSSProperties = { visibility: 'hidden', left: 0, top: 0 }
+
+/**
+ * Vendor-fold keys (`{provider}/{vendor}`) to collapse by default: everything
+ * except the vendor sub-group that holds the current selection, so the picker
+ * opens decluttered while the active model stays in view.
+ */
+function defaultCollapsedVendors(state: ModelDirectoryState): ReadonlySet<string> {
+  const collapsed = new Set<string>()
+  for (const group of state.groups) {
+    for (const model of group.models) {
+      const key = `${group.id}/${vendorOf(model.id)}`
+      if (state.current?.provider === group.id && state.current.model === model.id) continue
+      collapsed.add(key)
+    }
+  }
+  return collapsed
+}
 
 /**
  * Render the composer model seat.
@@ -81,6 +100,9 @@ export function ModelSelect(
   const id = useId()
 
   const [hiddenModels, setHiddenModels] = useState<ReadonlySet<string>>(() => readHiddenModels())
+  // Collapsed vendor sub-groups, keyed `{provider}/{vendor}`; in-memory only,
+  // re-seeded to "collapse all but the current selection" whenever the menu opens.
+  const [collapsedVendors, setCollapsedVendors] = useState<ReadonlySet<string>>(() => new Set())
 
   // Smart sort (three-tier): flagship vendor base weight + bounded usage
   // frequency, tie-broken with natural collation. Hidden models are filtered
@@ -106,6 +128,14 @@ export function ModelSelect(
         return collator.compare(a.name, b.name)
       })
   }, [state.groups, hiddenModels])
+
+  // Second-level fold: within each provider group, bucket models by vendor
+  // (order preserved, vendors ordered by their top model). Single-vendor
+  // providers keep their flat list — no redundant vendor header.
+  const vendoredGroups = useMemo(() => sortedGroups.map(group => ({
+    ...group,
+    vendors: groupByVendor(group.id, group.models),
+  })), [sortedGroups])
 
   const choices = useMemo(() => sortedGroups.flatMap(group =>
     group.models.map(model => ({
@@ -207,6 +237,7 @@ export function ModelSelect(
   const show = (): void => {
     setPane('root')
     setOpen(true)
+    setCollapsedVendors(defaultCollapsedVendors(state))
     reload()
   }
 
@@ -214,6 +245,15 @@ export function ModelSelect(
     setOpen(false)
     setPane('root')
     if (restoreFocus) queueMicrotask(() => { triggerRef.current?.focus() })
+  }
+
+  const toggleVendor = (key: string): void => {
+    setCollapsedVendors((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
   }
 
   const moveFocus = (offset: number): void => {
@@ -303,6 +343,49 @@ export function ModelSelect(
     const at = itemIndex++
     return (node: HTMLButtonElement | null) => { itemRefs.current[at] = node }
   }
+  const renderOption = (providerId: string, model: ModelCatalogModel) => {
+    const selected = state.current?.provider === providerId && state.current.model === model.id
+    return (
+      <button
+        ref={itemRef()}
+        type="button"
+        role="menuitemradio"
+        aria-checked={selected}
+        className={clsx(css.option, selected && css.selected)}
+        key={model.id}
+        title={model.name}
+        disabled={busy}
+        onClick={() => { choose({ provider: providerId, model: model.id }) }}
+      >
+        <span className={css.optionCopy}>
+          <span className={css.modelName}>{model.name}</span>
+        </span>
+        <span className={css.check}>
+          {selected ? <IconCheckOutline16 /> : null}
+        </span>
+        <span
+          role="button"
+          tabIndex={0}
+          className={css.hideButton}
+          title={t('model.hide')}
+          aria-label={t('model.hide')}
+          onClick={(event) => {
+            event.stopPropagation()
+            setHiddenModels(toggleModelHidden(providerId, model.id))
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault()
+              event.stopPropagation()
+              setHiddenModels(toggleModelHidden(providerId, model.id))
+            }
+          }}
+        >
+          <IconCloseOutline16 size={14} />
+        </span>
+      </button>
+    )
+  }
 
   return (
     <div ref={rootRef} className={css.root} onKeyDown={onRootKeyDown} onBlur={onBlur}>
@@ -378,7 +461,7 @@ export function ModelSelect(
                 </div>
               ))}
               <div className={clsx(css.groups, 'scrollable')}>
-                {sortedGroups.map((group) => {
+                {vendoredGroups.map((group) => {
                   const headingId = `${id}-${group.id}`
                   return (
                     <section role="group" aria-labelledby={headingId} className={css.group} key={group.id}>
@@ -402,49 +485,37 @@ export function ModelSelect(
                           )
                         })()}
                       </div>
-                      {group.models.map((model) => {
-                        const selected = state.current?.provider === group.id && state.current.model === model.id
-                        return (
-                          <button
-                            ref={itemRef()}
-                            type="button"
-                            role="menuitemradio"
-                            aria-checked={selected}
-                            className={clsx(css.option, selected && css.selected)}
-                            key={model.id}
-                            title={model.name}
-                            disabled={busy}
-                            onClick={() => { choose({ provider: group.id, model: model.id }) }}
-                          >
-                            <span className={css.optionCopy}>
-                              <span className={css.modelName}>{model.name}</span>
-                            </span>
-                            <span className={css.check}>
-                              {selected ? <IconCheckOutline16 /> : null}
-                            </span>
-                            <span
-                              role="button"
-                              tabIndex={0}
-                              className={css.hideButton}
-                              title={t('model.hide')}
-                              aria-label={t('model.hide')}
-                              onClick={(event) => {
-                                event.stopPropagation()
-                                setHiddenModels(toggleModelHidden(group.id, model.id))
-                              }}
-                              onKeyDown={(event) => {
-                                if (event.key === 'Enter' || event.key === ' ') {
-                                  event.preventDefault()
-                                  event.stopPropagation()
-                                  setHiddenModels(toggleModelHidden(group.id, model.id))
-                                }
-                              }}
-                            >
-                              <IconCloseOutline16 size={14} />
-                            </span>
-                          </button>
-                        )
-                      })}
+                      {group.vendors.length <= 1
+                        ? group.models.map(model => renderOption(group.id, model))
+                        : group.vendors.map((vendorGroup) => {
+                          const vendorKey = `${group.id}/${vendorGroup.vendor}`
+                          const collapsed = collapsedVendors.has(vendorKey)
+                          const vendorListId = `${id}-${group.id}-${vendorGroup.vendor}`
+                          return (
+                            <div role="group" aria-label={vendorLabel(vendorGroup.vendor)} className={css.vendorGroup} key={vendorGroup.vendor}>
+                              <button
+                                ref={itemRef()}
+                                type="button"
+                                className={css.vendorToggle}
+                                aria-expanded={!collapsed}
+                                aria-controls={vendorListId}
+                                aria-label={collapsed
+                                  ? t('vendor.expand', { vendor: vendorLabel(vendorGroup.vendor) })
+                                  : t('vendor.collapse', { vendor: vendorLabel(vendorGroup.vendor) })}
+                                onClick={() => { toggleVendor(vendorKey) }}
+                              >
+                                <IconChevronRightOutline14 className={css.vendorChevron} />
+                                <span className={css.vendorName}>{vendorLabel(vendorGroup.vendor)}</span>
+                                <span className={css.vendorCount}>{vendorGroup.models.length}</span>
+                              </button>
+                              {!collapsed && (
+                                <div className={css.vendorModels} id={vendorListId}>
+                                  {vendorGroup.models.map(model => renderOption(group.id, model))}
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
                     </section>
                   )
                 })}
