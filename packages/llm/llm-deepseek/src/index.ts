@@ -97,6 +97,7 @@ const DEFAULT_MODELS: DeepSeekCatalogModel[] = [
     name: 'DeepSeek-V4-Flash',
     description: 'Fast, efficient, and economical; suited to focused, routine, or parallel tasks.',
     contextWindow: DEFAULT_CONTEXT_WINDOW,
+    inputModalities: ['text', 'image'],
   },
   {
     id: 'deepseek-v4-pro',
