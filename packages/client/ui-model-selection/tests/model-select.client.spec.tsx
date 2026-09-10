@@ -322,4 +322,60 @@ describe('ModelSelect vendor fold', () => {
     expect(screen.queryByRole('button', { name: /收起/ })).toBeNull()
     expect(screen.getByRole('menuitemradio', { name: 'DeepSeek-V4-Flash' })).toBeTruthy()
   })
+
+  /** Six vendors: weight order is DeepSeek, Qwen, Kimi, GLM, Grok, MiniMax. */
+  const manyVendors = () => [{
+    id: 'b-ai',
+    name: 'b.ai',
+    models: [
+      { id: 'minimax-m3', name: 'MiniMax-M3' },
+      { id: 'glm-5.2', name: 'GLM-5.2' },
+      { id: 'kimi-k2.5', name: 'Kimi-K2.5' },
+      { id: 'deepseek-v3.2', name: 'DeepSeek-V3.2' },
+      { id: 'qwen3-max', name: 'Qwen3-Max' },
+      { id: 'grok-4', name: 'Grok-4' },
+    ],
+  }]
+
+  it('keeps four vendors plus the current one, unfolding the rest on demand', () => {
+    const directory = createSnapshotStore<ModelDirectoryState>(state({
+      groups: manyVendors(),
+      current: { provider: 'b-ai', model: 'deepseek-v3.2' },
+    }))
+    openModelPane(directory)
+
+    // The four heaviest vendors; the current vendor is the expanded one.
+    expect(screen.getByRole('button', { name: /收起 DeepSeek/ })).toBeTruthy()
+    for (const vendor of ['Qwen', 'Kimi', 'GLM']) {
+      expect(screen.getByRole('button', { name: `展开 ${vendor} 的模型` }).getAttribute('aria-expanded')).toBe('false')
+    }
+    expect(screen.queryByRole('button', { name: /Grok/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /MiniMax/ })).toBeNull()
+
+    const fold = screen.getByRole('button', { name: /显示更多/ })
+    expect(fold.textContent).toBe('显示更多（还有 2 个）前 4/6')
+    fireEvent.click(fold)
+    expect(screen.getByRole('button', { name: /展开 Grok/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /展开 MiniMax/ })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: '收起列表' }))
+    expect(screen.queryByRole('button', { name: /Grok/ })).toBeNull()
+    expect(screen.getByRole('button', { name: /显示更多/ })).toBeTruthy()
+  })
+
+  it('always shows the current selection vendor even past the fold', () => {
+    const directory = createSnapshotStore<ModelDirectoryState>(state({
+      groups: manyVendors(),
+      current: { provider: 'b-ai', model: 'minimax-m3' },
+    }))
+    openModelPane(directory)
+
+    // MiniMax is the lightest vendor (outside the four kept) yet the current
+    // selection keeps it visible, expanded, and reachable.
+    expect(screen.getByRole('button', { name: /收起 MiniMax/ })).toBeTruthy()
+    expect(screen.getByRole('menuitemradio', { name: 'MiniMax-M3' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Grok/ })).toBeNull()
+    expect(screen.getByRole('button', { name: /显示更多/ }).textContent)
+      .toBe('显示更多（还有 1 个）前 5/6')
+  })
 })

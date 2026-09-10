@@ -70,6 +70,15 @@ function defaultCollapsedVendors(state: ModelDirectoryState): ReadonlySet<string
 }
 
 /**
+ * Vendor sub-groups one provider shows before the second-level fold engages.
+ * Relay and gateway routes can carry a dozen vendors, so the menu shows this
+ * many plus the current selection's own vendor, keeping the rest behind the
+ * group's expand toggle; vendors order by their top model's weight, so the
+ * most-used ones are the ones that stay visible.
+ */
+const VENDOR_FOLD_LIMIT = 4
+
+/**
  * Render the composer model seat.
  * @param props - owner share (locked) + injected face (shared directory
  * store/verbs) + the standard locale seat.
@@ -103,6 +112,9 @@ export function ModelSelect(
   // Collapsed vendor sub-groups, keyed `{provider}/{vendor}`; in-memory only,
   // re-seeded to "collapse all but the current selection" whenever the menu opens.
   const [collapsedVendors, setCollapsedVendors] = useState<ReadonlySet<string>>(() => new Set())
+  // Provider groups whose vendor list is unfolded past {@link VENDOR_FOLD_LIMIT},
+  // keyed by provider id; in-memory only, re-seeded to folded on every open.
+  const [expandedVendorGroups, setExpandedVendorGroups] = useState<ReadonlySet<string>>(() => new Set())
 
   // Smart sort (three-tier): flagship vendor base weight + bounded usage
   // frequency, tie-broken with natural collation. Hidden models are filtered
@@ -238,6 +250,7 @@ export function ModelSelect(
     setPane('root')
     setOpen(true)
     setCollapsedVendors(defaultCollapsedVendors(state))
+    setExpandedVendorGroups(new Set())
     reload()
   }
 
@@ -252,6 +265,15 @@ export function ModelSelect(
       const next = new Set(prev)
       if (next.has(key)) next.delete(key)
       else next.add(key)
+      return next
+    })
+  }
+
+  const toggleVendorFold = (providerId: string): void => {
+    setExpandedVendorGroups((prev) => {
+      const next = new Set(prev)
+      if (next.has(providerId)) next.delete(providerId)
+      else next.add(providerId)
       return next
     })
   }
@@ -463,6 +485,19 @@ export function ModelSelect(
               <div className={clsx(css.groups, 'scrollable')}>
                 {vendoredGroups.map((group) => {
                   const headingId = `${id}-${group.id}`
+                  // Second-level fold: a large gateway keeps VENDOR_FOLD_LIMIT
+                  // vendors plus the current selection's own, so the model in use
+                  // stays reachable without unfolding the rest.
+                  const currentVendor = state.current?.provider === group.id
+                    ? vendorOf(state.current.model)
+                    : undefined
+                  const foldable = group.vendors.length > VENDOR_FOLD_LIMIT
+                  const vendorsExpanded = expandedVendorGroups.has(group.id)
+                  const visibleVendors = !foldable || vendorsExpanded
+                    ? group.vendors
+                    : group.vendors.filter((vendorGroup, index) =>
+                      index < VENDOR_FOLD_LIMIT || vendorGroup.vendor === currentVendor)
+                  const hiddenVendors = group.vendors.length - visibleVendors.length
                   return (
                     <section role="group" aria-labelledby={headingId} className={css.group} key={group.id}>
                       <div className={css.groupTitle} id={headingId}>
@@ -487,35 +522,57 @@ export function ModelSelect(
                       </div>
                       {group.vendors.length <= 1
                         ? group.models.map(model => renderOption(group.id, model))
-                        : group.vendors.map((vendorGroup) => {
-                          const vendorKey = `${group.id}/${vendorGroup.vendor}`
-                          const collapsed = collapsedVendors.has(vendorKey)
-                          const vendorListId = `${id}-${group.id}-${vendorGroup.vendor}`
-                          return (
-                            <div role="group" aria-label={vendorLabel(vendorGroup.vendor)} className={css.vendorGroup} key={vendorGroup.vendor}>
+                        : (
+                          <>
+                            {visibleVendors.map((vendorGroup) => {
+                              const vendorKey = `${group.id}/${vendorGroup.vendor}`
+                              const collapsed = collapsedVendors.has(vendorKey)
+                              const vendorListId = `${id}-${group.id}-${vendorGroup.vendor}`
+                              return (
+                                <div role="group" aria-label={vendorLabel(vendorGroup.vendor)} className={css.vendorGroup} key={vendorGroup.vendor}>
+                                  <button
+                                    ref={itemRef()}
+                                    type="button"
+                                    className={css.vendorToggle}
+                                    aria-expanded={!collapsed}
+                                    aria-controls={vendorListId}
+                                    aria-label={collapsed
+                                      ? t('vendor.expand', { vendor: vendorLabel(vendorGroup.vendor) })
+                                      : t('vendor.collapse', { vendor: vendorLabel(vendorGroup.vendor) })}
+                                    onClick={() => { toggleVendor(vendorKey) }}
+                                  >
+                                    <IconChevronRightOutline14 className={css.vendorChevron} />
+                                    <span className={css.vendorName}>{vendorLabel(vendorGroup.vendor)}</span>
+                                    <span className={css.vendorCount}>{vendorGroup.models.length}</span>
+                                  </button>
+                                  {!collapsed && (
+                                    <div className={css.vendorModels} id={vendorListId}>
+                                      {vendorGroup.models.map(model => renderOption(group.id, model))}
+                                    </div>
+                                  )}
+                                </div>
+                              )
+                            })}
+                            {foldable && (
                               <button
                                 ref={itemRef()}
                                 type="button"
-                                className={css.vendorToggle}
-                                aria-expanded={!collapsed}
-                                aria-controls={vendorListId}
-                                aria-label={collapsed
-                                  ? t('vendor.expand', { vendor: vendorLabel(vendorGroup.vendor) })
-                                  : t('vendor.collapse', { vendor: vendorLabel(vendorGroup.vendor) })}
-                                onClick={() => { toggleVendor(vendorKey) }}
+                                className={css.expandToggle}
+                                aria-expanded={vendorsExpanded}
+                                onClick={() => { toggleVendorFold(group.id) }}
                               >
-                                <IconChevronRightOutline14 className={css.vendorChevron} />
-                                <span className={css.vendorName}>{vendorLabel(vendorGroup.vendor)}</span>
-                                <span className={css.vendorCount}>{vendorGroup.models.length}</span>
+                                {vendorsExpanded
+                                  ? t('group.collapse')
+                                  : t('group.expand', { count: hiddenVendors })}
+                                {!vendorsExpanded && (
+                                  <span className={css.groupCountHint}>
+                                    {t('group.firstOf', { count: visibleVendors.length, total: group.vendors.length })}
+                                  </span>
+                                )}
                               </button>
-                              {!collapsed && (
-                                <div className={css.vendorModels} id={vendorListId}>
-                                  {vendorGroup.models.map(model => renderOption(group.id, model))}
-                                </div>
-                              )}
-                            </div>
-                          )
-                        })}
+                            )}
+                          </>
+                        )}
                     </section>
                   )
                 })}
