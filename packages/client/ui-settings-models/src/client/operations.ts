@@ -7,6 +7,7 @@
 
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type {
+  AuthorizationAttemptView, AuthorizationFlowView,
   CredentialInfo, LlmDiscoveredModel, LlmModelDiscoveryRequest,
   SettingsNamespaceView, SettingsPathOpView,
 } from '@deepseek-ai/dsh-api-remotes/client'
@@ -28,6 +29,13 @@ export type ModelDiscoveryOutcome =
   /** The candidates the provider disclosed, in its own order. */
   | { readonly kind: 'found'; readonly models: readonly LlmDiscoveredModel[] }
   /** The interrogation was refused, with the Host's own diagnostic. */
+  | { readonly kind: 'refused'; readonly message: string }
+
+/** What starting one sign-in attempt answered. */
+export type AuthorizationStartOutcome =
+  /** The attempt id the page polls and answers. */
+  | { readonly kind: 'started'; readonly attemptId: string }
+  /** The Host refused the start, with its own diagnostic. */
   | { readonly kind: 'refused'; readonly message: string }
 
 /** The Host operations the Models page and its cards invoke. */
@@ -71,6 +79,55 @@ export interface ModelsOperations {
    * @returns the candidates, or the refusal.
    */
   discoverModels(settingsNs: string, request: LlmModelDiscoveryRequest): Promise<ModelDiscoveryOutcome>
+  /**
+   * List the sign-in flows the Host's authorization seam offers. A deployment
+   * without the seam answers with an undefined list rather than a failure, and
+   * the sign-in card then simply does not render.
+   * @returns one view per flow, or undefined when the read was refused.
+   */
+  listAuthorizations(): Promise<readonly AuthorizationFlowView[] | undefined>
+  /**
+   * Start one sign-in attempt for a flow's key.
+   * @param key - the flow's joined credential key.
+   * @param method - the method id to run.
+   * @returns the attempt id, or the Host's refusal.
+   */
+  beginAuthorization(key: string, method: string): Promise<AuthorizationStartOutcome>
+  /**
+   * Read one attempt's progress since the caller's cursor.
+   * @param attemptId - the attempt to read.
+   * @param since - the highest notice sequence already held.
+   * @returns the attempt view, or undefined when the attempt is gone.
+   */
+  pollAuthorization(attemptId: string, since: number): Promise<AuthorizationAttemptView | undefined>
+  /**
+   * Answer the prompt an attempt is waiting on.
+   * @param attemptId - the attempt to answer.
+   * @param promptId - the prompt number the answer belongs to.
+   * @param value - the typed text, the secret, or a chosen option id.
+   * @returns the refusal message, or undefined once accepted.
+   */
+  answerAuthorization(attemptId: string, promptId: number, value: string): Promise<string | undefined>
+  /**
+   * Withdraw one attempt (idempotent).
+   * @param attemptId - the attempt to withdraw.
+   * @returns the refusal message, or undefined once withdrawn.
+   */
+  cancelAuthorization(attemptId: string): Promise<string | undefined>
+  /**
+   * Declare the profile a signed-in subscription route needs, so its catalog
+   * models register as a pickable route. Idempotent: the write merges at the
+   * profile node, so an existing profile keeps whatever else it carries.
+   * @param ns - settings namespace owning the profile.
+   * @param path - profile path inside that namespace.
+   * @param displayName - label recorded on a freshly declared profile.
+   * @returns the write outcome the card renders from.
+   */
+  ensureProviderProfile(
+    ns: string,
+    path: readonly string[],
+    displayName: string,
+  ): Promise<SettingsWriteOutcome>
 }
 
 /**
@@ -104,6 +161,38 @@ export function createModelsOperations(ctx: ClientContext): ModelsOperations {
       return response.ok
         ? { kind: 'found', models: response.value }
         : { kind: 'refused', message: response.error.message }
+    },
+    listAuthorizations: async () => {
+      const response = await ctx.remote.authorization.list()
+      return response.ok ? response.value : undefined
+    },
+    beginAuthorization: async (key, method) => {
+      const response = await ctx.remote.authorization.begin(key, method)
+      return response.ok
+        ? { kind: 'started', attemptId: response.value }
+        : { kind: 'refused', message: response.error.message }
+    },
+    pollAuthorization: async (attemptId, since) => {
+      const response = await ctx.remote.authorization.poll(attemptId, since)
+      return response.ok ? response.value : undefined
+    },
+    answerAuthorization: async (attemptId, promptId, value) => {
+      const response = await ctx.remote.authorization.answer(attemptId, promptId, value)
+      return response.ok ? undefined : response.error.message
+    },
+    cancelAuthorization: async (attemptId) => {
+      const response = await ctx.remote.authorization.cancel(attemptId)
+      return response.ok ? undefined : response.error.message
+    },
+    ensureProviderProfile: async (ns, path, displayName) => {
+      const response = await ctx.remote.settings.mutate(
+        ns,
+        [{ op: 'set', path: [...path], value: { displayName } }],
+        undefined,
+      )
+      if (response.ok) return { kind: 'written', view: response.value }
+      const { code, message } = response.error
+      return code === 'settings/conflict' ? { kind: 'conflict', message } : { kind: 'refused', message }
     },
   }
 }

@@ -31,6 +31,13 @@ async function bench(isLoopback = true, settings?: object, services: object = {}
       set: vi.fn(),
       unset: vi.fn(),
     },
+    authorization: {
+      list: vi.fn(() => Promise.resolve({ ok: true, value: [] })),
+      begin: vi.fn(),
+      poll: vi.fn(),
+      answer: vi.fn(),
+      cancel: vi.fn(),
+    },
     llm: {
       listProviders: vi.fn(() => Promise.resolve({ ok: true, value: [] })),
       listConfigurableProviders: vi.fn(() => Promise.resolve({ ok: true, value: [] })),
@@ -68,7 +75,7 @@ describe('ui-settings-models apply', () => {
 
   it('declares the services it uses', () => {
     expect(inject).toEqual([
-      'slots', 'locale', 'remote', 'remote.credentials', 'remote.llm', 'remote.settings',
+      'slots', 'locale', 'remote', 'remote.authorization', 'remote.credentials', 'remote.llm', 'remote.settings',
       'settingsScope', 'settingsSchema',
     ])
   })

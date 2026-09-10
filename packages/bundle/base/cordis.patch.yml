@@ -97,6 +97,13 @@
     - id: credentials
       name: '@deepseek-ai/dsh-credentials-local'
 
+    # The authorization seam behind the Models page's subscription sign-in: the
+    # pi-ai adapter registers one flow per installed catalog provider that ships
+    # a login (ChatGPT/Codex, Claude, Copilot, Kimi), and a completed flow writes
+    # a credential record into the same managed document the rows above read.
+    - id: authorization
+      name: '@deepseek-ai/dsh-authorization'
+
     # The pi-ai multi-provider twin, mounted dormant: zero routes (and no extra
     # models in the picker) until a `llm-pi-ai:` settings section supplies provider
     # profiles — then those routes register live, keys resolving per request

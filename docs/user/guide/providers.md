@@ -16,7 +16,7 @@ Keys are write-only. The page receives a redacted descriptor after saving, never
 
 Choose **Add provider** and pick a provider dsh ships with; the list shows provider ids such as `anthropic`, `openai`, `moonshotai` for Kimi, or `zai` for GLM. Enter its API key and save. The installed catalog supplies the endpoint, protocol, and model list.
 
-Providers that sign in with OAuth, such as Codex, are not supported here yet.
+Providers that sign in with OAuth instead of an API key — Codex (ChatGPT subscription), Claude, GitHub Copilot, Kimi — appear in the **Subscription sign-in** card below the provider rows. Pick a method, open the page the dialog names, enter the shown code or finish in the browser, and the credential is stored on this machine; the provider's models become pickable as soon as the sign-in completes. Nothing is sent anywhere until you start a sign-in.
 
 ## Add a custom provider
 

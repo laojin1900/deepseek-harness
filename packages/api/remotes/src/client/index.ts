@@ -123,6 +123,13 @@ export type {
 // sessionReferenceResolver namespaces.
 export type { FileReferenceCandidate } from '@deepseek-ai/dsh-file-reference/types'
 export type { SessionReferenceMentionCandidate } from '@deepseek-ai/dsh-session-reference/types'
+// Sign-in vocabulary for the authorization namespace: what a configuration
+// page lists, starts, follows, and answers (no credential value rides it).
+export type {
+  AuthorizationAttemptStatusView, AuthorizationAttemptView, AuthorizationFlowView,
+  AuthorizationMethodView, AuthorizationNoticeView, AuthorizationPromptOptionView,
+  AuthorizationPromptView,
+} from '@deepseek-ai/dsh-api-settings-controller/types'
 
 // The Remote failure vocabulary, re-exported so business packages keep naming
 // this assembly alone. Types only: a value export would make spec imports load

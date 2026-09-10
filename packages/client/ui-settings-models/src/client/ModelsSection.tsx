@@ -24,6 +24,7 @@ import type { ModelsSettingsStore, ProviderRow } from './store.ts'
 import type { ModelsOperations } from './operations.ts'
 import type { SettingsSchemaOperations } from './schema-operations.ts'
 import { ProviderEditor, type ProviderEditorProps } from './ProviderEditor.tsx'
+import { SubscriptionLogin } from './SubscriptionLogin.tsx'
 import type { en } from './locales.ts'
 import styles from './ModelsSection.module.css'
 
@@ -442,6 +443,13 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
           )
         })}
       </ul>
+      <SubscriptionLogin
+        operations={operations}
+        flows={state.authorizations}
+        rows={state.rows}
+        t={t}
+        onProfileDeclared={() => { void controller.load() }}
+      />
       <div className={styles['addBlock']}>
         {addTarget !== undefined && addNamespace !== undefined
           ? (

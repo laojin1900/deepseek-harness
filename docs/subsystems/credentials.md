@@ -122,6 +122,66 @@ async begin(request: AuthorizationRequest): Promise<AuthorizationOutcome>
 
 Source: [`packages/credentials/authorization/src/index.ts`](../../packages/credentials/authorization/src/index.ts)
 
+<a id="ctxauthorizationcontroller--authorizationcontroller"></a>
+
+### `ctx.authorizationController` — `AuthorizationController`
+
+Host service backing the generated `ctx.remote.authorization` namespace. It carries every wire obligation the authorization seam itself does not: the one-attempt-per-key refusal restated as a remote error, the notice cursor, the prompt numbering that makes a stale answer detectable, and the projection of both onto wire-safe views.
+
+```ts cordis-catalog
+/**
+ * Every sign-in a mounted flow owner offers, for the page's sign-in list.
+ * @returns one view per registered flow, in registration order.
+ * @throws RemoteError when no authorization seam is mounted.
+ */
+@Remote async list(): Promise<AuthorizationFlowView[]>
+
+/**
+ * Start one attempt. The call returns its id at once: the flow then runs in
+ * the Host and the page follows it through {@link AuthorizationController.poll}.
+ * @param key - the joined `<scope>/<id>` credential key a flow claims.
+ * @param method - the method id to run, as `list` reported it.
+ * @returns the attempt id this Host tracks.
+ * @throws RemoteError when the payload is invalid, no seam or flow matches,
+ *   the method is not offered, or an attempt for this key already runs.
+ */
+@Remote async begin(key: string, method: string): Promise<string>
+
+/**
+ * Read one attempt's progress since the caller's cursor, so a dropped poll
+ * costs nothing: notices carry their own sequence and the next call resumes
+ * from the last one held.
+ * @param attemptId - the attempt to read.
+ * @param since - the highest notice sequence the caller already holds, 0 for none.
+ * @returns the attempt's status, the notices after `since`, and its pending prompt.
+ * @throws RemoteError when the payload is invalid or the attempt is unknown.
+ */
+@Remote async poll(attemptId: string, since: number): Promise<AuthorizationAttemptView>
+
+/**
+ * Answer the prompt an attempt is waiting on. An answer naming a prompt the
+ * attempt no longer waits for is refused rather than applied to its
+ * successor, which is what a second browser tab's stale view would send.
+ * @param attemptId - the attempt to answer.
+ * @param promptId - the prompt number the answer belongs to.
+ * @param value - the typed text, the secret, or a chosen option id.
+ * @throws RemoteError when the payload is invalid, the attempt is unknown, or
+ *   the attempt waits on no such prompt.
+ */
+@Remote async answer(attemptId: string, promptId: number, value: string): Promise<void>
+
+/**
+ * Withdraw one attempt. The seam reports the attempt as `cancelled` once its
+ * runner unwinds; a page closes its dialog on this call rather than on that
+ * settlement, so a flow that ignores its signal cannot hold the surface.
+ * @param attemptId - the attempt to withdraw.
+ * @throws RemoteError when the payload is invalid or the attempt is unknown.
+ */
+@Remote async cancel(attemptId: string): Promise<void>
+```
+
+Source: [`packages/api/settings-controller/src/authorization.ts`](../../packages/api/settings-controller/src/authorization.ts)
+
 <a id="ctxcredentials--credentialprovider-abstract-seam"></a>
 
 ### `ctx.credentials` — `CredentialProvider` (abstract seam)

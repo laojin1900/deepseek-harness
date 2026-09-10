@@ -594,6 +594,46 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'authorizationController',
+    summary: 'Host service backing the generated `ctx.remote.authorization` namespace.',
+    description: 'Host service backing the generated `ctx.remote.authorization` namespace. It carries every wire obligation the authorization seam itself does not: the one-attempt-per-key refusal restated as a remote error, the notice cursor, the prompt numbering that makes a stale answer detectable, and the projection of both onto wire-safe views.',
+    methods: [
+      {
+        signature: '@Remote async list(): Promise<AuthorizationFlowView[]>',
+        description: 'Every sign-in a mounted flow owner offers, for the page\'s sign-in list.',
+        parameters: [],
+        returns: 'one view per registered flow, in registration order.',
+        throws: ['RemoteError when no authorization seam is mounted.'],
+      },
+      {
+        signature: '@Remote async begin(key: string, method: string): Promise<string>',
+        description: 'Start one attempt. The call returns its id at once: the flow then runs in the Host and the page follows it through AuthorizationController.poll.',
+        parameters: [{ name: 'key', description: 'the joined `<scope>/<id>` credential key a flow claims.' }, { name: 'method', description: 'the method id to run, as `list` reported it.' }],
+        returns: 'the attempt id this Host tracks.',
+        throws: ['RemoteError when the payload is invalid, no seam or flow matches, the method is not offered, or an attempt for this key already runs.'],
+      },
+      {
+        signature: '@Remote async poll(attemptId: string, since: number): Promise<AuthorizationAttemptView>',
+        description: 'Read one attempt\'s progress since the caller\'s cursor, so a dropped poll costs nothing: notices carry their own sequence and the next call resumes from the last one held.',
+        parameters: [{ name: 'attemptId', description: 'the attempt to read.' }, { name: 'since', description: 'the highest notice sequence the caller already holds, 0 for none.' }],
+        returns: 'the attempt\'s status, the notices after `since`, and its pending prompt.',
+        throws: ['RemoteError when the payload is invalid or the attempt is unknown.'],
+      },
+      {
+        signature: '@Remote async answer(attemptId: string, promptId: number, value: string): Promise<void>',
+        description: 'Answer the prompt an attempt is waiting on. An answer naming a prompt the attempt no longer waits for is refused rather than applied to its successor, which is what a second browser tab\'s stale view would send.',
+        parameters: [{ name: 'attemptId', description: 'the attempt to answer.' }, { name: 'promptId', description: 'the prompt number the answer belongs to.' }, { name: 'value', description: 'the typed text, the secret, or a chosen option id.' }],
+        throws: ['RemoteError when the payload is invalid, the attempt is unknown, or the attempt waits on no such prompt.'],
+      },
+      {
+        signature: '@Remote async cancel(attemptId: string): Promise<void>',
+        description: 'Withdraw one attempt. The seam reports the attempt as `cancelled` once its runner unwinds; a page closes its dialog on this call rather than on that settlement, so a flow that ignores its signal cannot hold the surface.',
+        parameters: [{ name: 'attemptId', description: 'the attempt to withdraw.' }],
+        throws: ['RemoteError when the payload is invalid or the attempt is unknown.'],
+      },
+    ],
+  },
+  {
     key: 'clientModules',
     summary: 'The web plugin table service: incremental `dsh.client` scan + wire composition + bundle route + index injection rows.',
     description: 'The web plugin table service: incremental `dsh.client` scan + wire composition + bundle route + index injection rows. Construction runs the activation scan synchronously — a malformed declaration or missing bundle among the already-loaded entries aggregates into one loud throw (FAILED fiber; the boot activation audit reports it).',
@@ -3758,12 +3798,24 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type AttachmentId = Branded<\'AttachmentId\'>;',
   },
   {
+    name: 'AuthorizationAttemptStatusView',
+    declaration: 'export type AuthorizationAttemptStatusView = \'running\' | \'authorized\' | \'cancelled\' | \'failed\';',
+  },
+  {
+    name: 'AuthorizationAttemptView',
+    declaration: 'export interface AuthorizationAttemptView {\n    readonly status: AuthorizationAttemptStatusView;\n    readonly notices: readonly AuthorizationNoticeView[];\n    readonly nextSince: number;\n    readonly prompt: AuthorizationPromptView | null;\n    readonly message?: string;\n}',
+  },
+  {
     name: 'AuthorizationEntry',
     declaration: 'export interface AuthorizationEntry {\n    key: CredentialKey;\n    label: string;\n    methods: readonly AuthorizationMethod[];\n    inFlight: boolean;\n}',
   },
   {
     name: 'AuthorizationFlow',
     declaration: 'export interface AuthorizationFlow {\n    readonly key: CredentialKey;\n    readonly label: string;\n    readonly methods: readonly [\n        AuthorizationMethod,\n        ...AuthorizationMethod[]\n    ];\n    run(session: AuthorizationSession): Promise<void>;\n}',
+  },
+  {
+    name: 'AuthorizationFlowView',
+    declaration: 'export interface AuthorizationFlowView {\n    readonly key: string;\n    readonly providerId: string;\n    readonly label: string;\n    readonly methods: readonly AuthorizationMethodView[];\n    readonly inFlight: boolean;\n}',
   },
   {
     name: 'AuthorizationInteraction',
@@ -3774,8 +3826,16 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface AuthorizationMethod {\n    id: string;\n    label: string;\n}',
   },
   {
+    name: 'AuthorizationMethodView',
+    declaration: 'export interface AuthorizationMethodView {\n    readonly id: string;\n    readonly label: string;\n}',
+  },
+  {
     name: 'AuthorizationNotice',
     declaration: 'export interface AuthorizationNotice {\n    message: string;\n    url?: string;\n    code?: string;\n}',
+  },
+  {
+    name: 'AuthorizationNoticeView',
+    declaration: 'export interface AuthorizationNoticeView {\n    readonly seq: number;\n    readonly message: string;\n    readonly url?: string;\n    readonly code?: string;\n}',
   },
   {
     name: 'AuthorizationOutcome',
@@ -3788,6 +3848,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'AuthorizationPromptOption',
     declaration: 'export interface AuthorizationPromptOption {\n    id: string;\n    label: string;\n    description?: string;\n}',
+  },
+  {
+    name: 'AuthorizationPromptOptionView',
+    declaration: 'export interface AuthorizationPromptOptionView {\n    readonly id: string;\n    readonly label: string;\n    readonly description?: string;\n}',
+  },
+  {
+    name: 'AuthorizationPromptView',
+    declaration: 'export type AuthorizationPromptView = {\n    readonly promptId: number;\n} & ({\n    readonly kind: \'text\';\n    readonly message: string;\n    readonly placeholder?: string;\n} | {\n    readonly kind: \'secret\';\n    readonly message: string;\n    readonly placeholder?: string;\n} | {\n    readonly kind: \'select\';\n    readonly message: string;\n    readonly options: readonly AuthorizationPromptOptionView[];\n});',
   },
   {
     name: 'AuthorizationRequest',

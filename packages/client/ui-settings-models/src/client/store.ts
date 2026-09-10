@@ -9,7 +9,7 @@
 
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type {
-  CredentialInfo, LlmConfigurableProvider, LlmProviderInfo, SettingsNamespaceView,
+  AuthorizationFlowView, CredentialInfo, LlmConfigurableProvider, LlmProviderInfo, SettingsNamespaceView,
 } from '@deepseek-ai/dsh-api-remotes/client'
 import type { SnapshotStore } from '@deepseek-ai/dsh-client-store'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
@@ -99,6 +99,12 @@ export interface ModelsSettingsState {
   writable: boolean
   /** Every configurable provider joined with its configured/credential state. */
   rows: readonly ProviderRow[]
+  /**
+   * Sign-in flows the Host's authorization seam offers, loaded with the same
+   * pass as the rows. Empty when the deployment mounts no seam, which is what
+   * keeps the sign-in card absent rather than offering a call that cannot work.
+   */
+  authorizations: readonly AuthorizationFlowView[]
   /** Namespace views by ns, for the editor's schema/layers/secrets. */
   namespaces: ReadonlyMap<string, SettingsNamespaceView>
 }
@@ -151,7 +157,7 @@ function apiKeyEnvOf(
 export class ModelsSettingsStore {
   /** The snapshot the section renders from (uSES-safe store). */
   readonly store: SnapshotStore<ModelsSettingsState> = createSnapshotStore<ModelsSettingsState>({
-    status: 'idle', error: null, credentialError: null, writable: false, rows: [], namespaces: new Map(),
+    status: 'idle', error: null, credentialError: null, writable: false, rows: [], authorizations: [], namespaces: new Map(),
   })
 
   /** Latest load wins; an older response never overwrites a newer one. */
@@ -180,10 +186,11 @@ export class ModelsSettingsStore {
   async load(): Promise<void> {
     const generation = ++this.generation
     this.store.update((s) => { s.status = 'loading'; s.error = null })
-    const [registered, declared] = await Promise.all([
+    const [registered, declared, , flows] = await Promise.all([
       this.ctx.remote.llm.listProviders(),
       this.ctx.remote.llm.listConfigurableProviders(),
       this.describeFace.ensure(),
+      this.authorizationFlows(),
     ])
     if (!registered.ok) { this.failLoad(generation, registered.error.message); return }
     if (!declared.ok) { this.failLoad(generation, declared.error.message); return }
@@ -229,6 +236,7 @@ export class ModelsSettingsStore {
       s.error = null
       s.credentialError = credentialError
       s.writable = writable
+      s.authorizations = flows
       s.rows = rows.map((row) => {
         const named = row.apiKeyEnv === undefined ? undefined : credentials[row.apiKeyEnv]
         const derived = row.apiKeyEnv !== undefined ? undefined : credentials[deriveKeyRef(row.entry.provider)]
@@ -240,6 +248,21 @@ export class ModelsSettingsStore {
       })
       s.namespaces = namespaces
     })
+  }
+
+  /**
+   * The sign-in flows the Host offers, read on the page's own load pass so the
+   * snapshot stays one atomic answer. A deployment whose composition mounts no
+   * authorization namespace (or a transport that refuses the read) answers with
+   * no flows: the page then shows no sign-in card rather than a dead control.
+   */
+  private async authorizationFlows(): Promise<readonly AuthorizationFlowView[]> {
+    try {
+      const response = await this.ctx.remote.authorization.list()
+      return response.ok ? response.value : []
+    } catch (_absentSeam) {
+      return []
+    }
   }
 
   /** Publish one load's failure text, unless a newer load already took over. */
