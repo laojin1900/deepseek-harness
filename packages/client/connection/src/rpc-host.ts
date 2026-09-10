@@ -176,7 +176,11 @@ export class HostConnectionService extends Service implements HostConnectionHand
       },
     }
     return owner.effect(
-      () => owner.webServer.register(route),
+      // The 0.1.5 loader order can run this effect before `webServer` is
+      // available; an absent service skips the registration instead of
+      // throwing out of boot, while the returned disposer still unregisters
+      // the route whenever it was claimed.
+      () => owner.get('webServer')?.register(route) ?? (() => {}),
       `client-connection: ${channel} rpc channel`,
     )
   }
