@@ -1096,7 +1096,7 @@ export interface DeepSeekCatalogModel {
 
 依赖：[`ModelModality`](../packages/llm/llm/src/index.ts) · [`RetryPolicyConfig`](../packages/llm/llm/src/index.ts) · [`SystemPromptUpdate`](../packages/llm/llm/src/index.ts)
 
-来源：[`packages/llm/llm-deepseek/src/index.ts:125`](../packages/llm/llm-deepseek/src/index.ts)
+来源：[`packages/llm/llm-deepseek/src/index.ts:120`](../packages/llm/llm-deepseek/src/index.ts)
 
 <a id="deepseek-aidsh-llm-pi-ai"></a>
 
@@ -1129,6 +1129,13 @@ export interface PiAiProviderProfile {
   api?: string
   /** Endpoint for this route's models; defaults to the installed catalog's endpoint. */
   baseURL?: string
+  /**
+   * Only accept discovered models whose id starts with this prefix. A
+   * subscription gateway serves many vendors under one endpoint; the prefix
+   * isolates the channel this route owns (e.g. `antigravity/`, `kimi-coding/`).
+   * Omission accepts every id the listing returns.
+   */
+  modelPrefix?: string
   /**
    * This route's model catalog. Omission serves the installed catalog for the
    * route unchanged; an explicit list replaces it, each entry defaulting its
@@ -1167,12 +1174,11 @@ export interface PiAiProviderProfile {
   /**
    * Request modalities for a model this route lists that neither its entry's
    * {@link PiAiModelProfile.input} nor the installed catalog declares (default
-   * `[text]`). A fallback like the capacities above, not an override: a
+   * `[text, image]`). A fallback like the capacities above, not an override: a
    * catalog model keeps the modalities the catalog records for it, and this
-   * value never narrows one. A gateway serving vision models the catalog does
-   * not describe declares `[text, image]` once here instead of on every entry.
-   * Unlike an entry's list, this one may not be empty — nothing sits below it
-   * to answer instead.
+   * value never narrows one. A gateway whose undescribed models are text-only
+   * declares `[text]` once here instead of on every entry. Unlike an entry's
+   * list, this one may not be empty — nothing sits below it to answer instead.
    */
   defaultInput?: PiAiModality[]
   /** Provider request headers, validated against Fetch when the profile resolves; Harness attribution wins reserved names. */
@@ -1228,12 +1234,12 @@ export interface PiAiModelProfile {
    * Request modalities this model accepts. Absent — or empty, which describes
    * a model that accepts nothing and so states no answer either — keeps the
    * installed catalog entry's modalities, then the route's `defaultInput`.
-   * Declaring images is what makes a hand-declared vision model usable, and
-   * declaring text alone corrects a catalog model whose gateway does not serve
-   * what the catalog records. This is a claim about the endpoint, not a check
-   * of it: nothing interrogates a gateway for what it accepts, so a model
-   * claiming images its endpoint refuses is refused by the provider instead,
-   * mid-turn.
+   * Declaring text alone corrects a catalog or gateway model whose endpoint
+   * does not serve images; declaring images restates the hand-declared default
+   * when a narrower route fallback would otherwise apply. This is a claim
+   * about the endpoint, not a check of it: nothing interrogates a gateway for
+   * what it accepts, so a model claiming images its endpoint refuses is
+   * refused by the provider instead, mid-turn.
    */
   input?: PiAiModality[]
   /**
@@ -3466,6 +3472,7 @@ export interface Config {
 - `@deepseek-ai/dsh-client-ui-directory-picker-native`（[`packages/client/ui-directory-picker-native/src/index.ts`](../packages/client/ui-directory-picker-native/src/index.ts)）
 - `@deepseek-ai/dsh-client-ui-goal`（[`packages/client/ui-goal/src/index.ts`](../packages/client/ui-goal/src/index.ts)）
 - `@deepseek-ai/dsh-client-ui-input-trigger`（[`packages/client/ui-input-trigger/src/index.ts`](../packages/client/ui-input-trigger/src/index.ts)）
+- `@deepseek-ai/dsh-client-ui-iteration-log`（[`packages/client/ui-iteration-log/src/index.ts`](../packages/client/ui-iteration-log/src/index.ts)）
 - `@deepseek-ai/dsh-client-ui-jobs`（[`packages/client/ui-jobs/src/index.ts`](../packages/client/ui-jobs/src/index.ts)）
 - `@deepseek-ai/dsh-client-ui-layout`（[`packages/client/ui-layout/src/index.ts`](../packages/client/ui-layout/src/index.ts)）
 - `@deepseek-ai/dsh-client-ui-message-feedback`（[`packages/client/ui-message-feedback/src/index.ts`](../packages/client/ui-message-feedback/src/index.ts)）
